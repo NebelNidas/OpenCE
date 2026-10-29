@@ -1282,10 +1282,10 @@ static struct tag_schema_field const scenario_fields[] =
 	TAG_SCHEMA_ENUM(struct scenario, type, NUMBER_OF_SCENARIO_TYPES, 0),
 	TAG_SCHEMA_BLOCK(struct scenario, predicted_ui_resources, predicted_resource_schema, MAXIMUM_PREDICTED_RESOURCES),
 	TAG_SCHEMA_BLOCK(struct scenario, object_names, object_name_schema, MAXIMUM_OBJECT_NAMES_PER_SCENARIO),
-	TAG_SCHEMA_BLOCK(struct scenario, scenery, scenery_schema, MAXIMUM_SCENERY_DATUMS_PER_SCENARIO),
+	TAG_SCHEMA_TOOL_BLOCK(struct scenario, scenery, scenery_schema, MAXIMUM_SCENERY_DATUMS_PER_SCENARIO),
 	TAG_SCHEMA_BLOCK(struct scenario, scenery_palette, scenery_palette_schema,
 		MAXIMUM_SCENARIO_OBJECT_PALETTE_ENTRIES_PER_BLOCK),
-	TAG_SCHEMA_BLOCK(struct scenario, bipeds, biped_schema, MAXIMUM_BIPED_DATUMS_PER_SCENARIO),
+	TAG_SCHEMA_TOOL_BLOCK(struct scenario, bipeds, biped_schema, MAXIMUM_BIPED_DATUMS_PER_SCENARIO),
 	TAG_SCHEMA_BLOCK(struct scenario, biped_palette, biped_palette_schema,
 		MAXIMUM_SCENARIO_OBJECT_PALETTE_ENTRIES_PER_BLOCK),
 	/* (the game places them as many as there are: object_types_place_all) */
