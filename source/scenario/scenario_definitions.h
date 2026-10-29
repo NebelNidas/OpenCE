@@ -318,7 +318,8 @@ struct scenario
 struct scenario_cutscene_flag
 {
 	long runtime_unused;
-	char name[TAG_STRING_LENGTH];
+	/* port: 32 bytes as the tag's, a name of 31 characters ends in the last */
+	char name[TAG_STRING_LENGTH+1];
 	real_point3d position;
 	real_euler_angles2d facing;
 	byte unused[0x24];
