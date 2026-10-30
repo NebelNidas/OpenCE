@@ -205,6 +205,14 @@ integrated graphics); after that the program is loaded from this file in
 under 2 ms, in that game and the next. The files grow to 64 MB at most (a
 large map's programs take some 2 MB). Delete the folder to clear them.
 
+`z/sound_cache/` in the save root has one file for each Custom Edition map
+whose sounds this build cannot play as they are (Ogg Vorbis, uncompressed,
+or mono at 44 kHz): the sounds as the map's load converted them. Later loads
+read them from there instead of converting them again. A sound that changed in
+the map is converted again. A map's file is about the size of its converted
+sounds (extinction's: 3 MB); `audio.conversion_cache` limits the folder. Delete
+the folder to clear them.
+
 These files are in the data root:
 
 | File | Contents |
@@ -550,6 +558,7 @@ the setting for one start of the game. It has priority over the file.
 | `audio.channels` | `"stereo"` | `HALO_AUDIO_CHANNELS` | `"stereo"`, or `"5.1"` for surround sound as with Dolby Digital on the Xbox. `"auto"`: 5.1 if the sound device has 6 or more channels. Linux and Windows only. |
 | `audio.reverb` | `true` | `HALO_REVERB` | `true`: the sounds of the world reverberate as the place the player is in does: the sound environments of the maps (a corridor, a cave, a large hall, outdoors) set the reverberation, as the I3DL2 reverb of the Xbox did. A sound behind a wall or a door is muffled in it too. `false`: no reverberation (sounds behind a wall are still muffled). |
 | `audio.resampler` | `"sinc"` | `HALO_AUDIO_RESAMPLER` | How the sounds are converted to the output's rate (48 kHz): `"sinc"` with a band-limited low pass, which keeps out the images above the sound's own rate; `"linear"` between neighbouring samples, which lets some of them through and sounds brighter for it. Audio Setup's SOUND PROCESSING screen sets it, with `audio.reverb`. |
+| `audio.conversion_cache` | `1024` | `HALO_AUDIO_CONVERSION_CACHE` | The most megabytes of `z/sound_cache/` in the save root, the converted sounds of Custom Edition maps (refer to "Files and folders"). Above it, the files used longest ago are removed, never the last loaded map's. `0`: convert the sounds at each load and keep none. Not in a browser. |
 | `audio.voice_chat` | `"push_to_talk"` | `HALO_VOICE_CHAT` | How you talk in voice chat: `"push_to_talk"` (while `controls.push_to_talk` is held; the microphone opens when you first press it), `"open_mic"` (when the microphone hears speech), or `"off"`. You hear the other players in every case. Refer to "Voice chat". |
 | `audio.voice_volume` | `1.0` | `HALO_VOICE_VOLUME` | The volume of the voices of the other players, `0` to `2`. |
 | `audio.output_device`, `audio.input_device` | `"default"` | `HALO_AUDIO_OUTPUT_DEVICE`, `HALO_AUDIO_INPUT_DEVICE` | The speakers and the microphone, by the name that Settings > Audio shows, or `"default"` for the device of the system. If the device is not found, the game uses the device of the system. Not on Android. |

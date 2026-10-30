@@ -351,6 +351,12 @@ static const struct config_setting config_settings[] =
 		"How sounds are converted to the output's rate: \"sinc\" with a\n"
 		"band-limited low pass; \"linear\" between neighbouring samples,\n"
 		"brighter for the aliasing it lets through." },
+	{ "audio.conversion_cache", _config_integer, "1024", "HALO_AUDIO_CONVERSION_CACHE", _environment_value,
+		_platform_desktop | _platform_android,
+		"Megabytes of Custom Edition maps' sounds kept converted in z/sound_cache/\n"
+		"of the save root, so that a map's next load reads them instead of\n"
+		"converting them again. The files used longest ago go first; the map\n"
+		"loaded last stays. 0: keep none." },
 	{ "audio.voice_chat", _config_string, "\"push_to_talk\"", "HALO_VOICE_CHAT", _environment_value, _platform_all,
 		"Talking in network games' voice chat: \"push_to_talk\" (while\n"
 		"controls.push_to_talk is held; the microphone opens the first time),\n"

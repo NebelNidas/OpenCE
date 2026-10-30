@@ -20,6 +20,14 @@ Xbox ADPCM is IMA ADPCM in blocks of 64 samples per channel: a 4-byte
 header per channel (the predictor and step index the block starts from),
 then 4-byte groups of eight nibbles, low nibble first, alternating between
 the channels (port/linux/src/dsound_sdl.c decodes it).
+
+A load's results are kept in z:\sound_cache\<map>.bin (sound_cache_*),
+and the map's next load takes each permutation from there instead of
+decoding it. An entry's key hashes everything the conversion depends on
+(the samples' bytes, compression, the sound's channels and rates), so a
+changed map, sound or permutation is converted again. A file of another
+SOUND_CACHE_VERSION is not read. audio.conversion_cache caps the folder's
+megabytes; the files used longest ago go first.
 */
 
 /* ---------- headers */
@@ -33,11 +41,16 @@ the channels (port/linux/src/dsound_sdl.c decodes it).
 
 #define STB_VORBIS_HEADER_ONLY
 #include "../../third_party/stb_vorbis/stb_vorbis.c"
+#include "../../third_party/monocypher/monocypher.h"
 
+#include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <xtl.h>
 
 unsigned long system_milliseconds(void);
+long config_integer(char const *name);
 
 /* ---------- constants */
 
@@ -71,6 +84,18 @@ uncompressed samples they hold, and no stream has more than two channels). */
 it, and the resampler scales by it) */
 #define MAXIMUM_SAMPLE_RATE 192000
 
+#define SOUND_CACHE_FOLDER "z:\\sound_cache"
+#define SOUND_CACHE_SIGNATURE 0x76636e73UL
+/* bump when the conversion's output changes */
+#define SOUND_CACHE_VERSION 1
+#define SOUND_CACHE_KEY_BYTES 16
+/* an entry's size for a permutation that cannot be converted */
+#define SOUND_CACHE_FAILED 0xFFFFFFFFUL
+#define SOUND_CACHE_MAXIMUM_ENTRIES 0x40000UL
+#define SOUND_CACHE_PATH_SIZE 256
+/* most files of the folder the cap considers */
+#define SOUND_CACHE_MAXIMUM_FILES 256
+
 /* ---------- globals */
 
 static int const adpcm_step_table[ADPCM_STEP_INDEX_MAXIMUM + 1] =
@@ -94,6 +119,46 @@ static struct
 	/* the most the region of the combined offset space for them holds */
 	unsigned long decoded_limit;
 } custom_edition_sounds_globals;
+
+/* cache file: this header, the entries, then their data (the decoded buffer as the writing load left it) */
+struct sound_cache_header
+{
+	uint32_t signature;
+	uint32_t version;
+	uint32_t entry_count;
+	uint32_t data_bytes;
+};
+
+struct sound_cache_entry
+{
+	byte key[SOUND_CACHE_KEY_BYTES];
+	/* in the data */
+	uint32_t offset;
+	uint32_t size;
+};
+
+static struct
+{
+	boolean enabled;
+	char path[SOUND_CACHE_PATH_SIZE];
+	FILE *file;
+	long data_position;
+	/* the file's, by key */
+	struct sound_cache_entry *entries;
+	long entry_count;
+	/* this load's, in the order it made them */
+	struct sound_cache_entry *made;
+	long made_count;
+	long made_capacity;
+	long read_count;
+} sound_cache;
+
+static struct sound_cache_file
+{
+	char name[64];
+	unsigned long long time;
+	unsigned long size;
+} sound_cache_files[SOUND_CACHE_MAXIMUM_FILES];
 
 /* ---------- private code */
 
@@ -516,6 +581,340 @@ static boolean permutation_needs_conversion(
 		(sound->encoding == 0 && sound->sample_rate != 0);
 }
 
+/* makes the permutation an Xbox ADPCM one of `bytes` at `offset` in the decoded buffer */
+static void permutation_take(
+	struct sound_permutation *permutation,
+	long decoded_offset,
+	long offset,
+	unsigned long bytes)
+{
+	permutation->compression = SOUND_COMPRESSION_XBOX_ADPCM;
+	permutation->samples.file_offset = decoded_offset + offset;
+	permutation->samples.size = (long)bytes;
+	permutation->sample_buffer_size = 0;
+
+	return;
+}
+
+static void sound_cache_put(
+	byte *at,
+	unsigned long value)
+{
+	at[0] = (byte)value;
+	at[1] = (byte)(value >> 8);
+	at[2] = (byte)(value >> 16);
+	at[3] = (byte)(value >> 24);
+
+	return;
+}
+
+static int sound_cache_entry_compare(
+	void const *a,
+	void const *b)
+{
+	return memcmp(((struct sound_cache_entry const *)a)->key, ((struct sound_cache_entry const *)b)->key,
+		SOUND_CACHE_KEY_BYTES);
+}
+
+/* the key of what the conversion makes of `data`, the permutation's samples */
+static void sound_cache_key(
+	struct sound_definition const *sound,
+	struct sound_permutation const *permutation,
+	byte const *data,
+	byte *key)
+{
+	byte input[16 + 32];
+
+	sound_cache_put(input, (unsigned long)permutation->compression);
+	sound_cache_put(input + 4, (unsigned long)sound->encoding);
+	sound_cache_put(input + 8, (unsigned long)sound->sample_rate);
+	sound_cache_put(input + 12, (unsigned long)playable_rate(sound));
+	crypto_blake2b(input + 16, 32, data, (size_t)permutation->samples.size);
+	crypto_blake2b(key, SOUND_CACHE_KEY_BYTES, input, sizeof(input));
+
+	return;
+}
+
+/* z:\sound_cache\<the loaded map's file name>.bin */
+static void sound_cache_path(
+	char *path)
+{
+	char const *name = custom_edition_cache_loaded_path();
+	char const *separator;
+	char clean[64];
+	long length;
+
+	if (!name)
+		name = "map";
+	if ((separator = strrchr(name, '\\')) != NULL)
+		name = separator + 1;
+	if ((separator = strrchr(name, '/')) != NULL)
+		name = separator + 1;
+	for (length = 0; name[length] && name[length] != '.' && length < (long)sizeof(clean) - 1; length++)
+		clean[length] = isalnum((unsigned char)name[length]) || name[length] == '-' ? name[length] : '_';
+	clean[length] = '\0';
+	snprintf(path, SOUND_CACHE_PATH_SIZE, "%s\\%s.bin", SOUND_CACHE_FOLDER, length ? clean : "map");
+
+	return;
+}
+
+/* opens the loading map's cache file, if it has one, and reads its entries */
+static void sound_cache_open(
+	void)
+{
+	struct sound_cache_header header;
+	long index;
+
+	memset(&sound_cache, 0, sizeof(sound_cache));
+#ifndef HALO_WEB
+	sound_cache.enabled = config_integer("audio.conversion_cache") > 0;
+#endif
+	if (!sound_cache.enabled)
+		return;
+	sound_cache_path(sound_cache.path);
+	sound_cache.file = fopen(sound_cache.path, "rb");
+	if (!sound_cache.file)
+		return;
+	if (fread(&header, sizeof(header), 1, sound_cache.file) != 1 ||
+		header.signature != SOUND_CACHE_SIGNATURE || header.version != SOUND_CACHE_VERSION ||
+		header.entry_count > SOUND_CACHE_MAXIMUM_ENTRIES ||
+		header.data_bytes > custom_edition_sounds_globals.decoded_limit ||
+		!(sound_cache.entries = malloc(header.entry_count * sizeof(*sound_cache.entries) + 1)) ||
+		fread(sound_cache.entries, sizeof(*sound_cache.entries), header.entry_count, sound_cache.file) != header.entry_count)
+	{
+		fclose(sound_cache.file);
+		sound_cache.file = NULL;
+		/* debug_free does not take NULL */
+		if (sound_cache.entries)
+			free(sound_cache.entries);
+		sound_cache.entries = NULL;
+		return;
+	}
+	for (index = 0; index < (long)header.entry_count; index++)
+	{
+		struct sound_cache_entry const *entry = &sound_cache.entries[index];
+
+		if (entry->size != SOUND_CACHE_FAILED &&
+			(entry->offset > header.data_bytes || entry->size > header.data_bytes - entry->offset))
+		{
+			break;
+		}
+	}
+	/* one entry outside the data and none is trusted */
+	sound_cache.entry_count = index < (long)header.entry_count ? 0 : (long)header.entry_count;
+	qsort(sound_cache.entries, sound_cache.entry_count, sizeof(*sound_cache.entries), sound_cache_entry_compare);
+	sound_cache.data_position = (long)(sizeof(header) + header.entry_count * sizeof(*sound_cache.entries));
+
+	return;
+}
+
+/* notes this load's entry for `key`, for the file it writes */
+static void sound_cache_note(
+	byte const *key,
+	unsigned long offset,
+	unsigned long size)
+{
+	struct sound_cache_entry *entry;
+
+	if (!sound_cache.enabled)
+		return;
+	if (sound_cache.made_count == sound_cache.made_capacity)
+	{
+		long capacity = sound_cache.made_capacity ? sound_cache.made_capacity * 2 : 1024;
+		struct sound_cache_entry *grown = capacity <= (long)SOUND_CACHE_MAXIMUM_ENTRIES ?
+			realloc(sound_cache.made, capacity * sizeof(*grown)) : NULL;
+
+		if (!grown)
+		{
+			/* a file missing entries is not written */
+			sound_cache.enabled = FALSE;
+			return;
+		}
+		sound_cache.made = grown;
+		sound_cache.made_capacity = capacity;
+	}
+	entry = &sound_cache.made[sound_cache.made_count++];
+	memcpy(entry->key, key, SOUND_CACHE_KEY_BYTES);
+	entry->offset = offset;
+	entry->size = size;
+
+	return;
+}
+
+/* entry of `key` in the cache file, or NULL */
+static struct sound_cache_entry const *sound_cache_find(
+	byte const *key)
+{
+	struct sound_cache_entry wanted;
+
+	if (!sound_cache.entry_count)
+		return NULL;
+	memcpy(wanted.key, key, SOUND_CACHE_KEY_BYTES);
+
+	return bsearch(&wanted, sound_cache.entries, sound_cache.entry_count, sizeof(wanted), sound_cache_entry_compare);
+}
+
+/* reads the Xbox ADPCM samples of `entry` into the decoded buffer for the permutation,
+their offset there or NONE when they cannot be read */
+static long sound_cache_read(
+	struct sound_cache_entry const *entry,
+	long channels,
+	struct sound_permutation *permutation,
+	long decoded_offset)
+{
+	long offset;
+
+	/* whole blocks of the sound's channels, as the conversion makes them */
+	if (entry->size == 0 || entry->size % (ADPCM_BLOCK_BYTES * channels) != 0)
+		return NONE;
+	offset = decoded_reserve(entry->size);
+	if (offset == NONE ||
+		fseek(sound_cache.file, sound_cache.data_position + (long)entry->offset, SEEK_SET) != 0 ||
+		fread(custom_edition_sounds_globals.decoded + offset, 1, entry->size, sound_cache.file) != entry->size)
+	{
+		return NONE;
+	}
+	custom_edition_sounds_globals.decoded_bytes += entry->size;
+	permutation_take(permutation, decoded_offset, offset, entry->size);
+
+	return offset;
+}
+
+/* rewrites the cache file with this load's entries and the decoded buffer,
+into a file beside it first so it is whole or absent */
+static boolean sound_cache_write(
+	void)
+{
+	struct sound_cache_header header;
+	char temporary[SOUND_CACHE_PATH_SIZE + 16];
+	FILE *file;
+	boolean written;
+
+	header.signature = SOUND_CACHE_SIGNATURE;
+	header.version = SOUND_CACHE_VERSION;
+	header.entry_count = (uint32_t)sound_cache.made_count;
+	header.data_bytes = (uint32_t)custom_edition_sounds_globals.decoded_bytes;
+	CreateDirectoryA(SOUND_CACHE_FOLDER, NULL);
+	/* own name, another game may be writing the same map's */
+	snprintf(temporary, sizeof(temporary), "%s.%08lx.new", sound_cache.path,
+		system_milliseconds() ^ (unsigned long)(uintptr_t)custom_edition_sounds_globals.decoded);
+	file = fopen(temporary, "wb");
+	if (!file)
+		return FALSE;
+	written = fwrite(&header, sizeof(header), 1, file) == 1 &&
+		fwrite(sound_cache.made, sizeof(*sound_cache.made), sound_cache.made_count, file) == (size_t)sound_cache.made_count &&
+		(!header.data_bytes ||
+			fwrite(custom_edition_sounds_globals.decoded, 1, header.data_bytes, file) == header.data_bytes);
+	written = fclose(file) == 0 && written;
+	/* MoveFileA does not replace a file */
+	if (written)
+	{
+		DeleteFileA(sound_cache.path);
+		written = MoveFileA(temporary, sound_cache.path) != 0;
+	}
+	if (!written)
+		DeleteFileA(temporary);
+
+	return written;
+}
+
+/* rewrites the header to make the file's time now's, the cap removes the files used longest ago */
+static void sound_cache_touch(
+	void)
+{
+	struct sound_cache_header header;
+	FILE *file = fopen(sound_cache.path, "r+b");
+
+	if (!file)
+		return;
+	if (fread(&header, sizeof(header), 1, file) == 1 && fseek(file, 0, SEEK_SET) == 0)
+		fwrite(&header, sizeof(header), 1, file);
+	fclose(file);
+
+	return;
+}
+
+/* removes the folder's files used longest ago while it holds more than audio.conversion_cache's megabytes,
+keeping the map's own */
+static void sound_cache_trim(
+	void)
+{
+	unsigned long long limit = (unsigned long long)config_integer("audio.conversion_cache") << 20;
+	unsigned long long total = 0;
+	char const *own = strrchr(sound_cache.path, '\\') + 1;
+	WIN32_FIND_DATAA data;
+	HANDLE find;
+	long count = 0;
+
+	find = FindFirstFileA(SOUND_CACHE_FOLDER "\\*", &data);
+	if (find == INVALID_HANDLE_VALUE)
+		return;
+	do
+	{
+		struct sound_cache_file *file = &sound_cache_files[count];
+
+		if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || strlen(data.cFileName) >= sizeof(file->name))
+			continue;
+		total += data.nFileSizeLow;
+		if (count == SOUND_CACHE_MAXIMUM_FILES || !csstrcasecmp(data.cFileName, own))
+			continue;
+		strcpy(file->name, data.cFileName);
+		file->time = (unsigned long long)data.ftLastWriteTime.dwHighDateTime << 32 | data.ftLastWriteTime.dwLowDateTime;
+		file->size = data.nFileSizeLow;
+		count++;
+	} while (FindNextFileA(find, &data));
+	CloseHandle(find);
+	while (total > limit && count > 0)
+	{
+		char path[SOUND_CACHE_PATH_SIZE];
+		long oldest = 0;
+		long index;
+
+		for (index = 1; index < count; index++)
+		{
+			if (sound_cache_files[index].time < sound_cache_files[oldest].time)
+				oldest = index;
+		}
+		snprintf(path, sizeof(path), "%s\\%s", SOUND_CACHE_FOLDER, sound_cache_files[oldest].name);
+		if (DeleteFileA(path))
+		{
+			error(_error_silent, "custom edition: removed the sound cache file %s (the folder is over %ld MB)",
+				path, config_integer("audio.conversion_cache"));
+			total -= sound_cache_files[oldest].size;
+		}
+		sound_cache_files[oldest] = sound_cache_files[--count];
+	}
+
+	return;
+}
+
+/* closes the cache file, rewritten when this load converted a permutation it lacked or did not use all it had */
+static void sound_cache_close(
+	void)
+{
+	if (sound_cache.file)
+		fclose(sound_cache.file);
+	if (sound_cache.enabled && sound_cache.made_count)
+	{
+		boolean rewrite = sound_cache.read_count < sound_cache.made_count ||
+			sound_cache.made_count != sound_cache.entry_count;
+
+		if (!rewrite)
+			sound_cache_touch();
+		error(_error_silent, "custom edition: %ld of %ld sound permutations read from %s%s",
+			sound_cache.read_count, sound_cache.made_count, sound_cache.path,
+			!rewrite ? "" : sound_cache_write() ? ", written anew" : ", which cannot be written");
+		sound_cache_trim();
+	}
+	if (sound_cache.entries)
+		free(sound_cache.entries);
+	if (sound_cache.made)
+		free(sound_cache.made);
+	memset(&sound_cache, 0, sizeof(sound_cache));
+
+	return;
+}
+
 /* Makes the permutation `permutation` of `sound` an Xbox ADPCM one in the
 format this build plays it, whose samples are in the decoded buffer; FALSE
 when it cannot be. */
@@ -531,6 +930,7 @@ static boolean permutation_convert(
 	unsigned long encoded_bytes;
 	byte *data;
 	long offset = NONE;
+	byte key[SOUND_CACHE_KEY_BYTES] = { 0 };
 
 	/* (the loader checked the samples lie in the file; none at all is no sound) */
 	if (permutation->samples.size <= 0 || permutation->samples.size > MAXIMUM_SAMPLES_BYTES ||
@@ -539,6 +939,27 @@ static boolean permutation_convert(
 		return FALSE;
 	}
 	custom_edition_cache_read(NONE, permutation->samples.file_offset, permutation->samples.size, data);
+	if (sound_cache.enabled)
+	{
+		struct sound_cache_entry const *entry;
+
+		sound_cache_key(sound, permutation, data, key);
+		entry = sound_cache_find(key);
+		if (entry && entry->size == SOUND_CACHE_FAILED)
+		{
+			free(data);
+			sound_cache.read_count++;
+			sound_cache_note(key, 0, SOUND_CACHE_FAILED);
+			return FALSE;
+		}
+		if (entry && (offset = sound_cache_read(entry, channels, permutation, decoded_offset)) != NONE)
+		{
+			free(data);
+			sound_cache.read_count++;
+			sound_cache_note(key, (unsigned long)offset, entry->size);
+			return TRUE;
+		}
+	}
 	decoded = samples_decode(data, permutation->samples.size, permutation->compression, FALSE,
 		channels, rate, &frames);
 	free(data);
@@ -551,11 +972,14 @@ static boolean permutation_convert(
 		{
 			adpcm_encode(frames.samples, frames.count, channels, custom_edition_sounds_globals.decoded + offset);
 			custom_edition_sounds_globals.decoded_bytes += encoded_bytes;
-			permutation->compression = SOUND_COMPRESSION_XBOX_ADPCM;
-			permutation->samples.file_offset = decoded_offset + offset;
-			permutation->samples.size = (long)encoded_bytes;
-			permutation->sample_buffer_size = 0;
+			permutation_take(permutation, decoded_offset, offset, encoded_bytes);
+			sound_cache_note(key, (unsigned long)offset, encoded_bytes);
 		}
+	}
+	else
+	{
+		/* not when the buffer had no room, that says nothing about the samples */
+		sound_cache_note(key, 0, SOUND_CACHE_FAILED);
 	}
 	frames_free(&frames);
 
@@ -574,9 +998,11 @@ boolean custom_edition_sounds_decode(
 	int32_t tag_index = NONE;
 	long converted_count = 0;
 	long failed_count = 0;
+	unsigned long source_bytes = 0;
 	unsigned long began = system_milliseconds();
 
 	custom_edition_sounds_globals.decoded_limit = decoded_limit;
+	sound_cache_open();
 	while ((sound = custom_edition_cache_tag_next(tag_cache, loaded_bytes, SOUND_DEFINITION_TAG, sizeof(*sound), &tag_index)) != NULL)
 	{
 		boolean converted = TRUE;
@@ -599,6 +1025,7 @@ boolean custom_edition_sounds_decode(
 					continue;
 				}
 				any = TRUE;
+				source_bytes += (unsigned long)MAX(permutation->samples.size, 0);
 				if (permutation_convert(sound, permutation, decoded_offset))
 				{
 					converted_count++;
@@ -624,10 +1051,11 @@ boolean custom_edition_sounds_decode(
 			failed_count++;
 		}
 	}
+	sound_cache_close();
 	if (converted_count || failed_count)
 	{
-		error(_error_silent, "custom edition: %ld sound permutations converted to %lu bytes of Xbox ADPCM in %lu ms%s",
-			converted_count, custom_edition_sounds_globals.decoded_bytes, system_milliseconds() - began,
+		error(_error_silent, "custom edition: %ld sound permutations of %lu bytes converted to %lu bytes of Xbox ADPCM in %lu ms%s",
+			converted_count, source_bytes, custom_edition_sounds_globals.decoded_bytes, system_milliseconds() - began,
 			failed_count ? " (some sounds could not be converted)" : "");
 	}
 
