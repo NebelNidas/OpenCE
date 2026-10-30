@@ -80,11 +80,11 @@ static struct
 	GLuint vertex_shader;
 	GLuint programs[NUMBER_OF_POST_PROGRAMS];
 	/* each program's metrics uniform, FXAA's bounds, the tone mapping's
-	settings, the presentation's rectangle and scale, and the fill's colour
-	and ring */
+	settings, the presentation's rectangle, scale and power, and the fill's
+	colour and ring */
 	GLint metrics[NUMBER_OF_POST_PROGRAMS];
 	GLint bounds;
-	GLint tone, rectangle, scale;
+	GLint tone, rectangle, scale, exponent;
 	GLint fill_color, fill_ring;
 	/* each set's programs or textures could not be made */
 	BOOL failed[NUMBER_OF_POST_SETS];
@@ -379,6 +379,8 @@ static const char present_source[] =
 	"uniform vec4 rectangle;\n"
 	"/* more than 0: linear, times this (scRGB) */\n"
 	"uniform float scale;\n"
+	"/* display.gamma's power of each value (1: none) */\n"
+	"uniform float exponent;\n"
 	"out vec4 result;\n"
 	"\n"
 	"void main()\n"
@@ -386,6 +388,7 @@ static const char present_source[] =
 	"\tvec2 position = (gl_FragCoord.xy - rectangle.xy) * rectangle.zw;\n"
 	"\tvec3 color = max(textureLod(color_texture, vec2(position.x, 1.0 - position.y), 0.0).rgb, vec3(0.0));\n"
 	"\n"
+	"\tcolor = pow(color, vec3(exponent));\n"
 	"\tresult = vec4(scale > 0.0 ? pow(color, vec3(2.2)) * scale : min(color, vec3(1.0)), 1.0);\n"
 	"}\n";
 
@@ -540,6 +543,7 @@ static GLuint program_build(int which)
 	{
 		post.rectangle = glGetUniformLocation(program, "rectangle");
 		post.scale = glGetUniformLocation(program, "scale");
+		post.exponent = glGetUniformLocation(program, "exponent");
 	}
 	else if (which == _post_program_fill)
 	{
@@ -829,7 +833,7 @@ BOOL xgpu_post_tone_map(GLuint source, GLuint source_texture, GLuint destination
 	return TRUE;
 }
 
-BOOL xgpu_post_present(GLuint texture, int x, int y, int width, int height, float scale)
+BOOL xgpu_post_present(GLuint texture, int x, int y, int width, int height, float scale, float exponent)
 {
 	float rectangle[4];
 
@@ -847,6 +851,7 @@ BOOL xgpu_post_present(GLuint texture, int x, int y, int width, int height, floa
 	glUseProgram(post.programs[_post_program_present]);
 	glUniform4fv(post.rectangle, 1, rectangle);
 	glUniform1f(post.scale, scale);
+	glUniform1f(post.exponent, exponent);
 	glDrawArrays(GL_TRIANGLES, 0, 3);
 	return TRUE;
 }

@@ -7815,6 +7815,30 @@ static void frame_pacing_wait(void)
 }
 #endif
 
+/* display.gamma as the power of the window's values,
+after Halo PC's gamma ramp (i / 255) ^ (ln(gamma / 255) / ln(0.5)) (haloce.exe 0x525ae0).
+The gamma is the level mid grey is shown at, 128 (Halo PC's default) is none. */
+static float present_gamma_exponent(void)
+{
+	static unsigned long read_at;
+	static BOOL read = FALSE;
+	static float exponent = 1.0f;
+
+	if (!read || read_at != config_changes())
+	{
+		long gamma = config_integer("display.gamma");
+
+		read = TRUE;
+		read_at = config_changes();
+		if (gamma < 1)
+			gamma = 1;
+		else if (gamma > 254)
+			gamma = 254;
+		exponent = gamma == 128 ? 1.0f : (float)(log(gamma / 255.0) / log(0.5));
+	}
+	return exponent;
+}
+
 void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destination_rectangle,
 	void *unused, void *unused2)
 {
@@ -7831,6 +7855,7 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	{
 		struct render_target_entry *back_buffer = render_target_get(&device.back_buffer);
 		int window_width, window_height, width, height, x, y;
+		float exponent = present_gamma_exponent();
 
 		if (trace_frame())
 			platform_log("present back buffer %08lx texture %u", (unsigned long)device.back_buffer.Data,
@@ -7862,12 +7887,11 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
-		/* (display.hdr's back buffer, or display.hdr_output's window, by a
-		shader: a blit neither makes the pixels linear nor, on OpenGL ES,
-		converts half floats) */
-		if (!((back_buffer->target.format == GL_RGBA16F || hdr.float_window) &&
+		/* display.hdr's back buffer, display.hdr_output's window or display.gamma need a shader,
+		a blit neither makes the pixels linear nor converts half floats on OpenGL ES */
+		if (!((back_buffer->target.format == GL_RGBA16F || hdr.float_window || exponent != 1.0f) &&
 			xgpu_post_present(back_buffer->target.texture, x, y, width, height,
-				hdr.float_window ? hdr.sdr_white : 0.0f)))
+				hdr.float_window ? hdr.sdr_white : 0.0f, exponent)))
 		{
 			glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer_get(back_buffer->target.texture, 0));
 			/* row 0 of the render target is the top of the picture */

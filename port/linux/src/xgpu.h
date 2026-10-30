@@ -329,11 +329,12 @@ renderbuffer's) */
 BOOL xgpu_post_tone_map(GLuint source, GLuint source_texture, GLuint destination, unsigned long width, unsigned long height,
 	const GLint corners[4], const struct xgpu_tone_mapping *tone_mapping);
 
-/* draws a GL_RGBA16F target's texture into the bound draw framebuffer's x,
-y, width, height (the window's, row 0 at the bottom), turned the right way
-up: as it is (SDR), or, with scale more than 0, made linear and scaled by
-it (an HDR display's scRGB framebuffer: scale is its SDR white) */
-BOOL xgpu_post_present(GLuint texture, int x, int y, int width, int height, float scale);
+/* draws a render target's texture (GL_RGBA16F or GL_RGBA8) the right way up
+into the bound draw framebuffer's x, y, width, height (the window's, row 0 at the bottom),
+each value to the power exponent (display.gamma, 1 for none).
+As it is (SDR), or with scale above 0 made linear and scaled by it (an HDR display's scRGB framebuffer:
+scale is its SDR white) */
+BOOL xgpu_post_present(GLuint texture, int x, int y, int width, int height, float scale, float exponent);
 
 /* Android: a vertex (indices 0) or index (1) buffer resource whose size
 bytes the game wrote once and will not write again, drawn from a GL buffer

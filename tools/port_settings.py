@@ -147,6 +147,8 @@ SCREENS = {
              "With HDR Display, how bright white is, in nits.\nAuto: Windows' SDR content brightness.", "desktop"),
             ("PEAK BRIGHTNESS:", "display.hdr_peak_brightness", PEAK_BRIGHTNESSES,
              "With HDR Display, your display's brightest, in\nnits. Auto: Windows' HDR calibration.", "desktop"),
+            ("GAMMA:", "display.gamma", [(str(level), str(level)) for level in (64, 96, 112, 128, 144, 160, 176, 192)],
+             "Halo PC's gamma: the level mid grey is shown at.\n128 as the game draws it; more is brighter.", None),
         ],
     },
     "mouse_settings": {
@@ -311,7 +313,7 @@ _video = SCREENS["video_settings"]
 _graphics = {"display.show_fps", "display.high_res_hud",
              "display.high_res_text", "display.anti_aliasing",
              "display.anisotropic_filtering", "display.shadow_resolution", "display.per_pixel_lighting",
-             "display.model_detail"}
+             "display.model_detail", "display.gamma"}
 # (the visual modifiers: a screen of their own, Extra Effects)
 _extra_effects = {"display.shield_glow", "display.shield_glow_intensity",
                   "display.overshield_effect", "display.hdr", "display.hdr_output", "display.hdr_tone_mapping", "display.hdr_paper_white",
