@@ -78,6 +78,7 @@ symbols in this file:
 #include "scenario/scenario.h" /* port: game_time_menu_scene */
 #include "scenario/scenario_definitions.h"
 #include "profile_sections.h" /* port: port/linux/include/profile_sections.h */
+#include "cseries/errors.h" /* port: the first tick's log line */
 /* port/linux/game/network_distributed.c's */
 void network_distributed_tick(void);
 
@@ -118,6 +119,9 @@ struct game_time_globals_struct
 /* ---------- globals */
 
 static struct game_time_globals_struct *game_time_globals;
+/* port: when the loading map began to load (system_milliseconds), for its first tick's log line;
+0 once logged */
+static unsigned long game_time_load_began;
 
 /* ---------- public code */
 
@@ -310,6 +314,17 @@ void game_time_set_speed(
 	if (!(speed >= 0.0f && speed <= 100.0f))
 		return;
 	game_time_globals->speed = speed;
+
+	return;
+}
+
+/* port: a map begins to load (main_new_map) */
+void game_time_note_load_began(
+	void)
+{
+	game_time_load_began = system_milliseconds();
+	if (!game_time_load_began)
+		game_time_load_began = 1;
 
 	return;
 }
@@ -516,6 +531,14 @@ void game_time_update(
 						if (!game_time_menu_scene())
 							profile_scope(game_time_network_distributed_tick_section, network_distributed_tick();)
 					}
+				}
+
+				/* port: how long the map took to load, in debug.txt */
+				if (game_time_load_began && game_time_globals->server_time > 0)
+				{
+					error(_error_silent, "the map's first tick, %lu ms after its load began",
+						system_milliseconds() - game_time_load_began);
+					game_time_load_began = 0;
 				}
 
 				/* (none while a client's clock waits: a frame that runs no tick

@@ -1471,6 +1471,8 @@ boolean main_menu_is_loaded(
 static void main_new_map(
 	struct game_options *options)
 {
+	/* port: for the first tick's log line (game_time.c) */
+	game_time_note_load_began();
 	input_flush();
 	if (game_load(options))
 	{

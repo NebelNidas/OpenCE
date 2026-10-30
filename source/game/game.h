@@ -194,6 +194,8 @@ void game_time_set_paused(boolean paused);
 real game_time_get_speed(void);
 void game_time_set_speed(real speed);
 void game_time_start(void);
+/* port: a map begins to load, for the log line of its first tick */
+void game_time_note_load_began(void);
 /* the game time set, before the first tick (a distributed game joined in
 progress: the host's) */
 void game_time_set_distributed(long time);

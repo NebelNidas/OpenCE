@@ -37,6 +37,8 @@ the channels (port/linux/src/dsound_sdl.c decodes it).
 #include <stdlib.h>
 #include <string.h>
 
+unsigned long system_milliseconds(void);
+
 /* ---------- constants */
 
 #define SOUND_COMPRESSION_NONE 0
@@ -572,6 +574,7 @@ boolean custom_edition_sounds_decode(
 	int32_t tag_index = NONE;
 	long converted_count = 0;
 	long failed_count = 0;
+	unsigned long began = system_milliseconds();
 
 	custom_edition_sounds_globals.decoded_limit = decoded_limit;
 	while ((sound = custom_edition_cache_tag_next(tag_cache, loaded_bytes, SOUND_DEFINITION_TAG, sizeof(*sound), &tag_index)) != NULL)
@@ -623,8 +626,8 @@ boolean custom_edition_sounds_decode(
 	}
 	if (converted_count || failed_count)
 	{
-		error(_error_silent, "custom edition: %ld sound permutations converted to %lu bytes of Xbox ADPCM%s",
-			converted_count, custom_edition_sounds_globals.decoded_bytes,
+		error(_error_silent, "custom edition: %ld sound permutations converted to %lu bytes of Xbox ADPCM in %lu ms%s",
+			converted_count, custom_edition_sounds_globals.decoded_bytes, system_milliseconds() - began,
 			failed_count ? " (some sounds could not be converted)" : "");
 	}
 
