@@ -225,7 +225,7 @@ static void lock_level(const DWORD *resource, unsigned long face, unsigned long 
 	unsigned long pitch;
 	char *bits;
 
-	xgpu_texture_describe(resource[3], resource[4], &description);
+	xgpu_texture_describe_resource(resource, &description);
 	pitch = xgpu_texture_level_pitch(&description, level);
 	bits = (char *)resource_data(resource[1]);
 	if (bits)
@@ -272,7 +272,7 @@ void WINAPI D3DVolumeTexture_LockBox(D3DVolumeTexture *texture, UINT level, D3DL
 	char *bits;
 
 	(void)flags;
-	xgpu_texture_describe(resource[3], resource[4], &description);
+	xgpu_texture_describe_resource(resource, &description);
 	row_pitch = xgpu_texture_level_pitch(&description, level);
 	slice = row_pitch * level_dimension(description.height, level);
 	bits = (char *)resource_data(resource[1]);
@@ -293,7 +293,7 @@ static void describe_level(const DWORD *resource, unsigned long level, D3DSURFAC
 	struct xgpu_texture_description texture;
 	unsigned long width, height;
 
-	xgpu_texture_describe(resource[3], resource[4], &texture);
+	xgpu_texture_describe_resource(resource, &texture);
 	width = level_dimension(texture.width, level);
 	height = level_dimension(texture.height, level);
 	memset(description, 0, sizeof(*description));
@@ -319,7 +319,7 @@ HRESULT WINAPI D3DTexture_GetSurfaceLevel(D3DTexture *texture, UINT level, D3DSu
 
 	if (!surface)
 		return E_OUTOFMEMORY;
-	xgpu_texture_describe(base->Format, base->Size, &description);
+	xgpu_texture_describe_resource((const DWORD *)base, &description);
 	width = level_dimension(description.width, level);
 	height = level_dimension(description.height, level);
 	surface->Common = D3DCOMMON_TYPE_SURFACE | 1;
@@ -329,6 +329,12 @@ HRESULT WINAPI D3DTexture_GetSurfaceLevel(D3DTexture *texture, UINT level, D3DSu
 		(floor_log2_unsigned(height) << D3DFORMAT_VSIZE_SHIFT) |
 		(1 << D3DFORMAT_MIPMAP_SHIFT);
 	surface->Size = base->Size;
+	/* a level of a Custom Edition bitmap with sizes of its own has them too (D3DCOMMON_PORT_PC_SIZE) */
+	if (base->Common & D3DCOMMON_PORT_PC_SIZE)
+	{
+		surface->Common |= D3DCOMMON_PORT_PC_SIZE;
+		surface->Size = ((DWORD)(height - 1) << D3DSIZE_PORT_PC_HEIGHT_SHIFT) | (DWORD)(width - 1);
+	}
 	surface->Parent = base;
 	*result = surface;
 	return S_OK;

@@ -342,7 +342,9 @@ tag lays them out, as rasterizer_xbox_bitmap_rebuild_hardware_format and
 the texture cache assume without checking: the game's own bitmap_verify, a
 format with a hardware texture, a compressed flag that says whether the
 format is compressed, power-of-two dimensions for the swizzle (or else a
-linear 2D bitmap), square cube maps, and every pixel its levels need. */
+linear 2D bitmap, or a 2D DXT one in whole blocks, which is not swizzled and
+gets its sizes from the texture cache: D3DCOMMON_PORT_PC_SIZE), square cube
+maps, and every pixel its levels need. */
 boolean custom_edition_bitmap_drawable(
 	struct bitmap_data *bitmap)
 {
@@ -354,7 +356,9 @@ boolean custom_edition_bitmap_drawable(
 		(TEST_FLAG(bitmap->flags, _bitmap_compressed_bit) != 0) == compressed_format &&
 		(linear ?
 			bitmap->type == _bitmap_type_2d :
-			power_of_two(bitmap->width) && power_of_two(bitmap->height) && power_of_two(bitmap->depth)) &&
+			(power_of_two(bitmap->width) && power_of_two(bitmap->height) && power_of_two(bitmap->depth)) ||
+				(bitmap->type == _bitmap_type_2d && compressed_format &&
+					bitmap->width % 4 == 0 && bitmap->height % 4 == 0)) &&
 		(bitmap->type != _bitmap_type_cube_map || bitmap->width == bitmap->height) &&
 		bitmap->pixels_size >= bitmap_get_pixel_data_size(bitmap);
 }

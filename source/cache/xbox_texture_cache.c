@@ -291,6 +291,8 @@ static boolean texture_cache_start_loading_bitmap(
 	boolean block);
 static boolean texture_cache_bitmap_valid(
 	struct bitmap_data *bitmap);
+static boolean texture_cache_bitmap_has_pc_size(
+	struct bitmap_data *bitmap);
 
 /* ---------- globals */
 
@@ -665,6 +667,15 @@ static void texture_cache_initialize_hardware_format(
 			D3DFORMAT_DMACHANNEL_A;
 		texture->Size = 0;
 	}
+	/* port: sizes the Format and Size words cannot say go in the Size word
+	(texture_cache_bitmap_has_pc_size) */
+	if (texture_cache_bitmap_has_pc_size(bitmap))
+	{
+		texture->Common |= D3DCOMMON_PORT_PC_SIZE;
+		texture->Size =
+			((DWORD)(bitmap->height - 1) << D3DSIZE_PORT_PC_HEIGHT_SHIFT) |
+			(DWORD)(bitmap->width - 1);
+	}
 	IDirect3DBaseTexture8_Register(texture, bitmap->base_address);
 
 	return;
@@ -757,6 +768,23 @@ void texture_cache_close(
 	return;
 }
 
+/* port: whether a Custom Edition map's or a mod's bitmap has sizes the Format and Size words cannot say:
+a 2D one with a side past 4096, or sides not powers of two, which swizzled bitmaps cannot have
+(only DXT ones get here, others are made linear as they load: cache_file_formats.c).
+Halo PC gives Direct3D 9 a bitmap's own sizes, each level half the last's rounded down,
+as bitmap_mipmap_get_width counts them (D3DCOMMON_PORT_PC_SIZE). */
+static boolean texture_cache_bitmap_has_pc_size(
+	struct bitmap_data *bitmap)
+{
+	extern boolean mod_bitmaps_contain(struct bitmap_data const *bitmap);
+
+	return (custom_edition_cache_tags_loaded() || mod_bitmaps_contain(bitmap)) &&
+		bitmap->type==_bitmap_type_2d &&
+		(bitmap->width>4096 || bitmap->height>4096 ||
+			(!TEST_FLAG(bitmap->flags, _bitmap_linear_bit) &&
+				((bitmap->width & (bitmap->width-1))!=0 || (bitmap->height & (bitmap->height-1))!=0)));
+}
+
 /* port: whether a map's bitmap is one the hardware format can describe and
 the texture cache can size: a type and format the tables have, sizes up to
 the device's (D3DDevice_GetDeviceCaps: 4096, a volume 512; retail's are 2048
@@ -769,7 +797,19 @@ static boolean texture_cache_bitmap_valid(
 	static boolean reported = FALSE;
 	boolean linear = TEST_FLAG(bitmap->flags, _bitmap_linear_bit);
 	short maximum_dimension = bitmap->type==_bitmap_type_3d ? 512 : 4096;
-	boolean valid =
+	boolean pc_size = texture_cache_bitmap_has_pc_size(bitmap);
+	boolean valid;
+
+	/* port: a Custom Edition bitmap with sizes of its own is drawn up to the
+	driver's largest texture, as Halo PC's are up to Direct3D 9's */
+	if (pc_size)
+	{
+		D3DCAPS8 caps;
+
+		IDirect3DDevice8_GetDeviceCaps(global_d3d_device, &caps);
+		maximum_dimension = (short)PIN((long)MIN(caps.MaxTextureWidth, caps.MaxTextureHeight), 4096, SHORT_MAX);
+	}
+	valid =
 		VALID_INDEX(bitmap->type, NUMBER_OF_BITMAP_TYPES) &&
 		VALID_INDEX(bitmap->format, NUMBER_OF_BITMAP_FORMATS) &&
 		bitmap->width>0 && bitmap->width<=maximum_dimension &&
@@ -787,7 +827,9 @@ static boolean texture_cache_bitmap_valid(
 
 		valid =
 			bitmap_d3d_format_tables[linear ? _bitmap_d3d_format_table_linear : _bitmap_d3d_format_table_regular][bitmap->format]!=NONE &&
-			compressed_flag==compressed_format;
+			compressed_flag==compressed_format &&
+			/* port: in whole 4x4 blocks, as Direct3D 9 takes them */
+			(!pc_size || !compressed_format || (bitmap->width%4==0 && bitmap->height%4==0));
 	}
 	/* port: a Custom Edition map's linear rows need not be whole steps of the
 	pitch, nor a mod's: they are padded to them as its pixels load
@@ -802,7 +844,8 @@ static boolean texture_cache_bitmap_valid(
 			row_pitch>0 &&
 			(row_pitch%D3DTEXTURE_PITCH_ALIGNMENT==0 || custom_edition_cache_tags_loaded() ||
 				mod_bitmaps_contain(bitmap)) &&
-			steps<=(long)((D3DSIZE_PITCH_MASK>>D3DSIZE_PITCH_SHIFT)+1);
+			/* port: a pitch the Size word need not hold */
+			(pc_size || steps<=(long)((D3DSIZE_PITCH_MASK>>D3DSIZE_PITCH_SHIFT)+1));
 	}
 	if (!valid && !reported)
 	{

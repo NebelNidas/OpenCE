@@ -216,6 +216,7 @@ struct xgpu_texture_description
 	unsigned long width, height, depth, levels;
 	BOOL cube_map;
 	BOOL linear;        /* not swizzled; addressed with texel coordinates */
+	BOOL pc_size;       /* sizes from the Size word (D3DCOMMON_PORT_PC_SIZE) */
 	BOOL compressed;
 	unsigned long pitch; /* linear textures */
 	BOOL hires;         /* a high-res HUD texture drawn in the texture's place (hud_hires.h) */
@@ -225,6 +226,11 @@ struct xgpu_texture_description
 };
 
 void xgpu_texture_describe(DWORD format_word, DWORD size_word, struct xgpu_texture_description *description);
+/* the same from a texture header (Common, Data, Lock, Format, Size), which
+may carry its sizes in its Size word (D3DCOMMON_PORT_PC_SIZE) */
+void xgpu_texture_describe_resource(const DWORD *resource, struct xgpu_texture_description *description);
+/* the driver's largest texture, at least 4096 (d3d8_gl.c) */
+extern unsigned long xgpu_maximum_texture_size;
 /* bytes of one face, mip levels included (cube faces are padded) */
 unsigned long xgpu_texture_face_size(const struct xgpu_texture_description *description);
 unsigned long xgpu_texture_level_offset(const struct xgpu_texture_description *description, unsigned long level);

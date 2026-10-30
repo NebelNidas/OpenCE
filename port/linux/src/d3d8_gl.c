@@ -160,6 +160,9 @@ context exists */
 static int anti_aliasing_value = -1;
 static int anti_aliasing_samples;
 static GLint anti_aliasing_maximum_samples, maximum_target_size;
+/* GL_MAX_TEXTURE_SIZE, at least the 4096 of a Format word and at most a
+bitmap's 32767 (D3DDevice_GetDeviceCaps, D3DCOMMON_PORT_PC_SIZE) */
+unsigned long xgpu_maximum_texture_size = 4096;
 
 static void anti_aliasing_prepare(void);
 
@@ -2603,6 +2606,8 @@ static void gl_initialize(void)
 
 		glGetIntegerv(GL_MAX_SAMPLES, &anti_aliasing_maximum_samples);
 		glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum_target_size);
+		xgpu_maximum_texture_size = (unsigned long)(maximum_target_size < 4096 ? 4096 :
+			maximum_target_size > 32767 ? 32767 : maximum_target_size);
 		glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &renderbuffer_size);
 		if (renderbuffer_size < maximum_target_size)
 			maximum_target_size = renderbuffer_size;
@@ -2992,8 +2997,10 @@ void WINAPI D3DDevice_GetDeviceCaps(D3DCAPS8 *caps)
 {
 	memset(caps, 0, sizeof(*caps));
 	caps->DeviceType = D3DDEVTYPE_HAL;
-	caps->MaxTextureWidth = 4096;
-	caps->MaxTextureHeight = 4096;
+	/* the driver's, only a Custom Edition bitmap with sizes of its own goes past the Format word's 4096
+	(xbox_texture_cache.c) */
+	caps->MaxTextureWidth = xgpu_maximum_texture_size;
+	caps->MaxTextureHeight = xgpu_maximum_texture_size;
 	caps->MaxVolumeExtent = 512;
 	caps->MaxTextureRepeat = 8192;
 	caps->MaxTextureAspectRatio = 4096;
@@ -5277,7 +5284,7 @@ static void trace_draw(const char *kind, D3DPRIMITIVETYPE type, unsigned long co
 
 			if (!texture || !((D3D__RenderState[D3DRS_PSTEXTUREMODES] >> (5 * stage)) & 0x1f))
 				continue;
-			xgpu_texture_describe(texture->Format, texture->Size, &description);
+			xgpu_texture_describe_resource((const DWORD *)texture, &description);
 			platform_log("    t%d: data %08lx format %08lx size %08lx -> fmt %02lx %lux%lux%lu levels %lu linear %d cube %d rt %d min %lu mip %lu bias %g maxmip %lu",
 				stage, texture->Data, texture->Format, texture->Size, description.format, description.width,
 				description.height, description.depth, description.levels, description.linear, description.cube_map,

@@ -183,6 +183,27 @@ void xgpu_texture_describe(DWORD format_word, DWORD size_word, struct xgpu_textu
 		description->depth = 1;
 }
 
+void xgpu_texture_describe_resource(const DWORD *resource, struct xgpu_texture_description *description)
+{
+	DWORD size_word = resource[4];
+	unsigned long row_bytes;
+
+	if (!(resource[0] & D3DCOMMON_PORT_PC_SIZE))
+	{
+		xgpu_texture_describe(resource[3], size_word, description);
+		return;
+	}
+	xgpu_texture_describe(resource[3], 0, description);
+	description->width = (size_word & D3DSIZE_PORT_PC_WIDTH_MASK) + 1;
+	description->height = (size_word >> D3DSIZE_PORT_PC_HEIGHT_SHIFT) + 1;
+	description->depth = 1;
+	row_bytes = description->width * format_information(description->format).bytes;
+	description->pitch = description->linear ?
+		(row_bytes + D3DTEXTURE_PITCH_ALIGNMENT - 1) / D3DTEXTURE_PITCH_ALIGNMENT * D3DTEXTURE_PITCH_ALIGNMENT :
+		row_bytes;
+	description->pc_size = TRUE;
+}
+
 static unsigned long level_bytes(const struct xgpu_texture_description *description, unsigned long level)
 {
 	struct format_information information = format_information(description->format);
@@ -217,11 +238,14 @@ unsigned long xgpu_texture_face_size(const struct xgpu_texture_description *desc
 }
 
 /* whether the size is one D3DDevice_GetDeviceCaps allows (d3d8_gl.c): up
-to 4096 by 4096, and 512 each way for a volume */
+to 4096 by 4096, 512 each way for a volume, and the driver's largest for a
+Custom Edition bitmap with sizes of its own */
 static BOOL texture_size_supported(const struct xgpu_texture_description *description)
 {
 	if (description->depth > 1)
 		return description->width <= 512 && description->height <= 512 && description->depth <= 512;
+	if (description->pc_size)
+		return description->width <= xgpu_maximum_texture_size && description->height <= xgpu_maximum_texture_size;
 	return description->width <= 4096 && description->height <= 4096;
 }
 
@@ -1393,7 +1417,7 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 		entry = calloc(1, sizeof(*entry));
 		if (!entry)
 		{
-			xgpu_texture_describe(format_word, size_word, description);
+			xgpu_texture_describe_resource(resource, description);
 			*target = GL_TEXTURE_2D;
 			return 0;
 		}
@@ -1401,7 +1425,7 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 		entry->format_word = format_word;
 		entry->size_word = size_word;
 		entry->palette_hash = hash;
-		xgpu_texture_describe(format_word, size_word, &entry->description);
+		xgpu_texture_describe_resource(resource, &entry->description);
 		entry->target = entry->description.cube_map ? GL_TEXTURE_CUBE_MAP :
 			entry->description.depth > 1 ? GL_TEXTURE_3D : GL_TEXTURE_2D;
 		entry->address = (unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(data);

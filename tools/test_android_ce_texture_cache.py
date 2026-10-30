@@ -53,6 +53,8 @@ static void platform_log(const char *s,...) { log_count++; }
 static void xgpu_texture_describe(DWORD f,DWORD s,struct xgpu_texture_description *d) {
  memset(d,0,sizeof(*d));d->width=d->height=16;d->depth=d->levels=1;
 }
+/* the resources here have the Xbox's sizes, Custom Edition's own are in another word */
+static void xgpu_texture_describe_resource(const DWORD *r,struct xgpu_texture_description *d) { xgpu_texture_describe(r[3],r[4],d); }
 static BOOL texture_size_supported(const struct xgpu_texture_description *d) { return TRUE; }
 static unsigned long xgpu_texture_face_size(const struct xgpu_texture_description *d) { return 1024; }
 static unsigned long xgpu_texture_level_offset(const struct xgpu_texture_description *d,int l) { return 1024; }

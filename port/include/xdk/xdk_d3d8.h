@@ -193,6 +193,14 @@ descriptor is 0x271df27f, 640x480 with a 2560-byte pitch) */
 #define D3DSIZE_PITCH_MASK 0xFF000000
 #define D3DSIZE_PITCH_SHIFT 24
 
+/* a Custom Edition bitmap of sides the Format and Size words cannot hold
+(DXT with sides that are not powers of two, or a side past 4096).
+Its Size word holds width - 1 and height - 1 in 16 bits each,
+the rest is the Format word's (xbox_texture_cache.c). */
+#define D3DCOMMON_PORT_PC_SIZE 0x08000000
+#define D3DSIZE_PORT_PC_WIDTH_MASK 0x0000FFFF
+#define D3DSIZE_PORT_PC_HEIGHT_SHIFT 16
+
 /* texture memory: the library allocates it 128-byte aligned
 (D3DDevice_CreateTexture's contiguous allocation) and rounds each cube map
 face up to 128 bytes (its texture layout code); pitches are in 64-byte
