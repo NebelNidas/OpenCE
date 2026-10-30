@@ -1157,7 +1157,29 @@ static int sdl_gamepads(SDL_Gamepad *gamepads[PORT_COUNT])
 		}
 	}
 #else
-	for (index = 0; index < count && found < PORT_COUNT; index++)
+	/* input.gamepad_offset leaves the first gamepads to another game on this machine
+	(SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1 for the unfocused window); input.gamepad_count keeps
+	a host off its client's, whose START would ask the host for a player (ui_check_for_pause_game) */
+	int limit;
+	{
+		static int offset;
+		static int used;
+		static unsigned long read_at = (unsigned long)-1;
+
+		if (read_at != config_changes())
+		{
+			read_at = config_changes();
+			offset = (int)config_integer("input.gamepad_offset");
+			if (offset < 0)
+				offset = 0;
+			used = (int)config_integer("input.gamepad_count");
+			if (used < 0)
+				used = 0;
+		}
+		index = offset < count ? offset : count;
+		limit = used > 0 && used < PORT_COUNT ? used : PORT_COUNT;
+	}
+	for (; index < count && found < limit; index++)
 	{
 		SDL_Gamepad *gamepad = SDL_GetGamepadFromID(ids[index]);
 

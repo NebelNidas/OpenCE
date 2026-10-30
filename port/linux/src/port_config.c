@@ -404,6 +404,13 @@ static const struct config_setting config_settings[] =
 		"that is not the camera (a VR build's hand: past a corner the camera is\n"
 		"behind), no further than a player leaning out and an arm, and in front\n"
 		"of the eye. false: from the camera and vehicles' guns only." },
+	{ "input.gamepad_offset", _config_integer, "0", "HALO_GAMEPAD_OFFSET", _environment_value, _platform_desktop,
+		"How many of the connected gamepads this game leaves to another game\n"
+		"on this machine: 2 gives it the third and later ones." },
+	{ "input.gamepad_count", _config_integer, "0", "HALO_GAMEPAD_COUNT", _environment_value, _platform_desktop,
+		"How many gamepads this game uses after those it leaves to another (0:\n"
+		"all). A network co-op host with a client on this machine sets its own\n"
+		"players' count, so the client's gamepads stay the client's." },
 	{ "input.mouse_aim_assist", _config_boolean, "false", "HALO_MOUSE_AIM_ASSIST", _environment_value, _platform_desktop,
 		"Magnetism while aiming with the mouse, as with a controller: the view\n"
 		"slowed and dragged along by a target. The last of the mouse and the\n"
