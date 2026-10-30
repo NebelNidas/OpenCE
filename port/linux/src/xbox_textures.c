@@ -919,6 +919,14 @@ void halo_custom_edition_texels_channels(const void *texels, unsigned char chann
 	}
 }
 
+void halo_custom_edition_texels_moved(const void *from, const void *to)
+{
+	unsigned char channel_order = custom_edition_texels_order((unsigned long)from);
+
+	halo_custom_edition_texels_channels(from, _custom_edition_channels_xbox);
+	halo_custom_edition_texels_channels(to, channel_order);
+}
+
 void halo_custom_edition_texels_forget(void)
 {
 	custom_edition_hud_meter_active = 0;

@@ -32,6 +32,14 @@ typedef void (*lruv_debug_header_proc)(
 typedef const char *(*lruv_debug_block_name_proc)(
 	long block_index);
 
+/* port: copies a block's size bytes from its old offset (as
+lruv_block_get_address gives them) to its new one, for lruv_block_new_moving */
+typedef void (*lruv_move_block_proc)(
+	long block_index,
+	unsigned long old_offset,
+	unsigned long new_offset,
+	long size);
+
 struct lruv_cache
 {
 	char name[32];
@@ -116,6 +124,10 @@ boolean lruv_block_touched(
 long lruv_block_new(
 	struct lruv_cache *cache,
 	long size);
+long lruv_block_new_moving(
+	struct lruv_cache *cache,
+	long size,
+	lruv_move_block_proc move_block_proc);
 
 void lruv_cache_get_page_usage(
 	struct lruv_cache *cache,

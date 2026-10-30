@@ -743,6 +743,343 @@ long lruv_block_new(
 #undef index
 }
 
+/* port: lruv_block_new_moving's view of the cache in page order, blocks and
+the free pages between them */
+enum
+{
+	_lruv_segment_free,
+	_lruv_segment_unused,
+	_lruv_segment_used,
+	_lruv_segment_locked
+};
+
+struct lruv_cache_segment
+{
+	long first_page_index;
+	long page_count;
+	long block_index;
+	long state;
+};
+
+struct lruv_cache_range
+{
+	long first_segment;
+	long end_segment;
+	long used_page_count;
+};
+
+static long lruv_cache_segments(
+	struct lruv_cache *cache,
+	struct lruv_cache_segment *segments)
+{
+	long segment_count = 0;
+	long page_index = 0;
+	long block_index = cache->first_block_index;
+
+	while (page_index < cache->page_count)
+	{
+		struct lruv_cache_segment *segment = &segments[segment_count++];
+
+		if (block_index == NONE || page_index < lruv_cache_block_get(cache, block_index)->first_page_index)
+		{
+			segment->first_page_index = page_index;
+			segment->page_count = (block_index == NONE ? cache->page_count : lruv_cache_block_get(cache, block_index)->first_page_index) - page_index;
+			segment->block_index = NONE;
+			segment->state = _lruv_segment_free;
+		}
+		else
+		{
+			struct lruv_cache_block *block = lruv_cache_block_get(cache, block_index);
+
+			segment->first_page_index = block->first_page_index;
+			segment->page_count = block->page_count;
+			segment->block_index = block_index;
+			if (cache->locked_block_proc && cache->locked_block_proc(block_index))
+				segment->state = _lruv_segment_locked;
+			else if ((unsigned long)block->last_used_tick == (unsigned long)cache->tick)
+				segment->state = _lruv_segment_used;
+			else
+				segment->state = _lruv_segment_unused;
+			block_index = block->next_block_index;
+		}
+		page_index = segment->first_page_index + segment->page_count;
+	}
+
+	return segment_count;
+}
+
+/* new first pages for the used blocks of a range, in free and unused pages
+outside it: largest block first, each in the smallest run that holds it */
+static boolean lruv_cache_plan_moves(
+	struct lruv_cache_segment const *segments,
+	long segment_count,
+	struct lruv_cache_range const *range,
+	struct lruv_cache_segment *runs,
+	struct lruv_cache_segment *plan,
+	long *plan_count)
+{
+	long run_count = 0;
+	long segment_index;
+	long move_count = 0;
+
+	for (segment_index = 0; segment_index < segment_count; segment_index++)
+	{
+		struct lruv_cache_segment const *segment = &segments[segment_index];
+		boolean inside = segment_index >= range->first_segment && segment_index < range->end_segment;
+
+		if (inside && segment->state == _lruv_segment_used)
+			plan[move_count++] = *segment;
+		if (inside || (segment->state != _lruv_segment_free && segment->state != _lruv_segment_unused))
+			continue;
+		if (run_count > 0 && runs[run_count - 1].first_page_index + runs[run_count - 1].page_count == segment->first_page_index)
+			runs[run_count - 1].page_count += segment->page_count;
+		else
+			runs[run_count++] = *segment;
+	}
+	for (segment_index = 0; segment_index < move_count; segment_index++)
+	{
+		long largest = segment_index;
+		long candidate;
+		long best_run = NONE;
+		long run_index;
+		struct lruv_cache_segment swapped;
+
+		for (candidate = segment_index + 1; candidate < move_count; candidate++)
+		{
+			if (plan[candidate].page_count > plan[largest].page_count)
+				largest = candidate;
+		}
+		swapped = plan[segment_index];
+		plan[segment_index] = plan[largest];
+		plan[largest] = swapped;
+		for (run_index = 0; run_index < run_count; run_index++)
+		{
+			if (runs[run_index].page_count >= plan[segment_index].page_count &&
+				(best_run == NONE || runs[run_index].page_count < runs[best_run].page_count))
+			{
+				best_run = run_index;
+			}
+		}
+		if (best_run == NONE)
+			return FALSE;
+		plan[segment_index].first_page_index = runs[best_run].first_page_index;
+		runs[best_run].first_page_index += plan[segment_index].page_count;
+		runs[best_run].page_count -= plan[segment_index].page_count;
+	}
+	*plan_count = move_count;
+
+	return TRUE;
+}
+
+/* the unused blocks with a page in [first_page_index, end_page_index) deleted */
+static void lruv_cache_clear_pages(
+	struct lruv_cache *cache,
+	long first_page_index,
+	long end_page_index)
+{
+	long block_index = cache->first_block_index;
+
+	while (block_index != NONE)
+	{
+		struct lruv_cache_block *block = lruv_cache_block_get(cache, block_index);
+		long next_block_index = block->next_block_index;
+
+		if (block->first_page_index >= end_page_index)
+			break;
+		if (block->first_page_index + block->page_count > first_page_index)
+		{
+			match_assert(
+				"c:\\halo\\SOURCE\\memory\\lruv_cache.c",
+				__LINE__,
+				(unsigned long)block->last_used_tick != (unsigned long)cache->tick &&
+				(!cache->locked_block_proc || !cache->locked_block_proc(block_index)));
+			lruv_block_delete(cache, block_index);
+		}
+		block_index = next_block_index;
+	}
+
+	return;
+}
+
+/* a block put at free pages, the list kept in page order */
+static void lruv_cache_move_block(
+	struct lruv_cache *cache,
+	long block_index,
+	long first_page_index,
+	lruv_move_block_proc move_block_proc)
+{
+	struct lruv_cache_block *block = lruv_cache_block_get(cache, block_index);
+	long old_first_page_index = block->first_page_index;
+	long previous_block_index = NONE;
+	long other_index;
+
+	if (block->previous_block_index != NONE)
+		lruv_cache_block_get(cache, block->previous_block_index)->next_block_index = block->next_block_index;
+	else
+		cache->first_block_index = block->next_block_index;
+	if (block->next_block_index != NONE)
+		lruv_cache_block_get(cache, block->next_block_index)->previous_block_index = block->previous_block_index;
+	else
+		cache->last_block_index = block->previous_block_index;
+
+	for (other_index = cache->first_block_index; other_index != NONE;
+		other_index = lruv_cache_block_get(cache, other_index)->next_block_index)
+	{
+		if (lruv_cache_block_get(cache, other_index)->first_page_index > first_page_index)
+			break;
+		previous_block_index = other_index;
+	}
+	block->previous_block_index = previous_block_index;
+	if (previous_block_index == NONE)
+	{
+		block->next_block_index = cache->first_block_index;
+		cache->first_block_index = block_index;
+	}
+	else
+	{
+		block->next_block_index = lruv_cache_block_get(cache, previous_block_index)->next_block_index;
+		lruv_cache_block_get(cache, previous_block_index)->next_block_index = block_index;
+	}
+	if (block->next_block_index == NONE)
+		cache->last_block_index = block_index;
+	else
+		lruv_cache_block_get(cache, block->next_block_index)->previous_block_index = block_index;
+	block->first_page_index = first_page_index;
+	lruv_cache_verify(cache, TRUE);
+
+	move_block_proc(
+		block_index,
+		(unsigned long)old_first_page_index << cache->page_size_bits,
+		(unsigned long)first_page_index << cache->page_size_bits,
+		block->page_count << cache->page_size_bits);
+
+	return;
+}
+
+/* port: lruv_block_new, or when no run of pages is free of this tick's blocks,
+the run with the fewest of them cleared by moving those blocks to free and
+unused pages elsewhere; NONE when no run can be cleared */
+long lruv_block_new_moving(
+	struct lruv_cache *cache,
+	long size,
+	lruv_move_block_proc move_block_proc)
+{
+	enum
+	{
+		MAXIMUM_TRIED_RANGES = 16
+	};
+	/* a request no run could be cleared for: its size is not tried again this tick */
+	static struct lruv_cache *failed_cache = NULL;
+	static long failed_tick;
+	static long failed_page_count;
+	long new_block_index = lruv_block_new(cache, size);
+	long desired_page_count = lruv_cache_bytes_to_pages(cache, size);
+	long maximum_segment_count;
+	struct lruv_cache_segment *segments;
+	struct lruv_cache_segment *runs;
+	struct lruv_cache_segment *plan;
+	struct lruv_cache_range *ranges;
+	long segment_count;
+	long range_count = 0;
+	long try_index;
+
+	if (new_block_index != NONE || !move_block_proc || desired_page_count > cache->page_count ||
+		(failed_cache == cache && failed_tick == cache->tick && failed_page_count == desired_page_count))
+	{
+		return new_block_index;
+	}
+
+	maximum_segment_count = 2 * cache->blocks->actual_count + 1;
+	segments = malloc(maximum_segment_count * (3 * sizeof(struct lruv_cache_segment) + sizeof(struct lruv_cache_range)));
+	if (!segments)
+		return NONE;
+	runs = segments + maximum_segment_count;
+	plan = runs + maximum_segment_count;
+	ranges = (struct lruv_cache_range *)(plan + maximum_segment_count);
+	segment_count = lruv_cache_segments(cache, segments);
+
+	/* from each segment, the fewest segments holding desired_page_count pages,
+	unless a locked block is among them */
+	{
+		long end_segment = 0;
+		long page_count = 0;
+		long used_page_count = 0;
+		long locked_count = 0;
+		long first_segment;
+
+		for (first_segment = 0; first_segment < segment_count; first_segment++)
+		{
+			while (end_segment < segment_count && page_count < desired_page_count)
+			{
+				page_count += segments[end_segment].page_count;
+				if (segments[end_segment].state == _lruv_segment_used)
+					used_page_count += segments[end_segment].page_count;
+				if (segments[end_segment].state == _lruv_segment_locked)
+					locked_count++;
+				end_segment++;
+			}
+			if (page_count < desired_page_count)
+				break;
+			if (!locked_count)
+			{
+				ranges[range_count].first_segment = first_segment;
+				ranges[range_count].end_segment = end_segment;
+				ranges[range_count].used_page_count = used_page_count;
+				range_count++;
+			}
+			page_count -= segments[first_segment].page_count;
+			if (segments[first_segment].state == _lruv_segment_used)
+				used_page_count -= segments[first_segment].page_count;
+			if (segments[first_segment].state == _lruv_segment_locked)
+				locked_count--;
+		}
+	}
+
+	/* fewest pages to move first */
+	for (try_index = 0; try_index < MAXIMUM_TRIED_RANGES && try_index < range_count; try_index++)
+	{
+		long best = try_index;
+		long candidate;
+		long plan_count;
+		struct lruv_cache_range swapped;
+
+		for (candidate = try_index + 1; candidate < range_count; candidate++)
+		{
+			if (ranges[candidate].used_page_count < ranges[best].used_page_count)
+				best = candidate;
+		}
+		swapped = ranges[try_index];
+		ranges[try_index] = ranges[best];
+		ranges[best] = swapped;
+		if (lruv_cache_plan_moves(segments, segment_count, &ranges[try_index], runs, plan, &plan_count))
+		{
+			struct lruv_cache_range const *range = &ranges[try_index];
+			long plan_index;
+
+			for (plan_index = 0; plan_index < plan_count; plan_index++)
+			{
+				lruv_cache_clear_pages(cache, plan[plan_index].first_page_index,
+					plan[plan_index].first_page_index + plan[plan_index].page_count);
+				lruv_cache_move_block(cache, plan[plan_index].block_index, plan[plan_index].first_page_index,
+					move_block_proc);
+			}
+			lruv_cache_clear_pages(cache, segments[range->first_segment].first_page_index,
+				segments[range->end_segment - 1].first_page_index + segments[range->end_segment - 1].page_count);
+			new_block_index = lruv_block_new(cache, size);
+			break;
+		}
+	}
+	free(segments);
+	if (new_block_index == NONE)
+	{
+		failed_cache = cache;
+		failed_tick = cache->tick;
+		failed_page_count = desired_page_count;
+	}
+
+	return new_block_index;
+}
+
 /* ---------- private code */
 
 static long lruv_cache_bytes_to_pages(

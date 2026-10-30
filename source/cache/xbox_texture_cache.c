@@ -268,6 +268,11 @@ static boolean texture_cache_locked_block_proc(
 	long block_index);
 static void texture_cache_delete_block_proc(
 	long block_index);
+static void texture_cache_move_block_proc(
+	long block_index,
+	unsigned long old_offset,
+	unsigned long new_offset,
+	long size);
 static const char *texture_cache_name_block_proc(
 	long block_index);
 long bitmap_format_to_d3d_format(
@@ -490,6 +495,27 @@ void texture_cache_return_memory(
 		XBOX_TEXTURE_CACHE_SIZE,
 		XBOX_TEXTURE_CACHE_PROTECTION);
 	xbox_texture_cache_globals.stolen_memory = FALSE;
+
+	return;
+}
+
+/* port: a texture lruv_block_new_moving moved, and the addresses of its pixels */
+static void texture_cache_move_block_proc(
+	long block_index,
+	unsigned long old_offset,
+	unsigned long new_offset,
+	long size)
+{
+	struct xbox_texture_cache_texture *texture = datum_get(
+		xbox_texture_cache_globals.textures,
+		block_index);
+	byte *old_address = xbox_texture_cache_globals.base_address + old_offset;
+	byte *new_address = xbox_texture_cache_globals.base_address + new_offset;
+
+	memcpy(new_address, old_address, size);
+	halo_custom_edition_texels_moved(old_address, new_address);
+	texture->bitmap->base_address = new_address;
+	texture->hardware_format.Data += new_offset - old_offset;
 
 	return;
 }
@@ -853,9 +879,11 @@ static boolean texture_cache_start_loading_bitmap(
 	size = rasterizer_xbox_bitmap_get_pixel_data_size(bitmap);
 
 	size = MAX(size, bitmap->pixels_size);
-	cache_block_index = lruv_block_new(
+	/* port: moving this frame's textures aside when it has to */
+	cache_block_index = lruv_block_new_moving(
 		xbox_texture_cache_globals.cache,
-		size);
+		size,
+		texture_cache_move_block_proc);
 	if (cache_block_index != NONE)
 	{
 		long new_texture_index;
