@@ -256,11 +256,29 @@ boolean viewmodel_is_visible(void)
 
 	if (!initialized || read_at != changes)
 	{
-		visible = config_boolean("display.viewmodel_visible") != 0;
+		visible = config_boolean("display.viewmodel_visible") != 0 &&
+			!config_boolean("display.photo_mode");
 		initialized = TRUE;
 		read_at = changes;
 	}
 	return visible;
+}
+
+/* ---------- display.photo_mode */
+
+boolean photo_mode_is_on(void)
+{
+	static boolean initialized, on;
+	static unsigned long read_at;
+	unsigned long changes = config_changes();
+
+	if (!initialized || read_at != changes)
+	{
+		on = config_boolean("display.photo_mode") != 0;
+		initialized = TRUE;
+		read_at = changes;
+	}
+	return on;
 }
 
 /* ---------- whether the energy shield's flare is drawn on the arms */

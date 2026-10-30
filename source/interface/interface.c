@@ -88,6 +88,7 @@ symbols in this file:
 #include "interface/hud_definitions.h"
 #include "interface/interface.h"
 #include "interface/hud_messaging.h"
+#include "interface/hud_unit.h" /* port: display.photo_mode */
 #include "interface/terminal.h"
 #include "interface/virtual_keyboard.h"
 #include "interface/weapon_hud_interface_definition.h"
@@ -109,6 +110,7 @@ symbols in this file:
 #include "latency_meter.h" /* port: port/linux/game/latency_meter.c */
 #include "stats_log.h" /* port: port/linux/game/stats_log.c */
 #include "frame_rate_display.h" /* port: port/linux/game/frame_rate_display.c */
+#include "view_fov.h" /* port: port/linux/game/view_fov.c */
 
 /* ---------- constants */
 
@@ -587,6 +589,16 @@ void interface_draw_screen(
 
 	if (render.local_player_index == NONE)
 		return;
+	/* port: display.photo_mode skips the HUD and its screen effect */
+	if (photo_mode_is_on())
+	{
+		long player_index = local_player_get_player_index(render.local_player_index);
+
+		rasterizer_screen_effect(NULL);
+		if (player_index != NONE)
+			hud_play_unit_sounds(player_get(player_index), FALSE);
+		return;
+	}
 
 	weapon_hud_index = interface_get_weapon_hud_index(&flashlight_power);
 	if (weapon_hud_index != NONE)

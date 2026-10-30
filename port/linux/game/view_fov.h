@@ -31,4 +31,7 @@ boolean viewmodel_shield_is_visible(void);
 /* whether a pass draws: not one of the first-person weapon's that is hidden */
 boolean viewmodel_draws_geometry(boolean first_person);
 
+/* display.photo_mode: no first-person weapon, HUD or motion sensor */
+boolean photo_mode_is_on(void);
+
 #endif
