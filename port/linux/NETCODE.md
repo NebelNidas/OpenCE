@@ -84,6 +84,14 @@ with ideas from VALORANT's netcode articles, keeping the 30 Hz tick:
   threads' wake times along with it. The object, device and name syncs
   bring the clients up to date.
 
+  A scene that cannot be skipped (a cinematic without a skip, or one where
+  the scripts hold the players' controls) is fast-forwarded the same way:
+  while more than half the machines showing it hold accept, the host runs
+  six times as fast and its presentation tells the clients, which run as
+  fast from that tick on. A client starts and stops a one-way trip later
+  than the host, so it ends about where the host is. The host counts the
+  holds in its clock's milliseconds, since its ticks go faster meanwhile.
+
   The host's EXTRA ENEMIES (`coop_enemies.c`, `network.coop_enemies_mode`)
   give each squad of enemies a level places more of itself: PER PLAYER, a
   percentage of itself for each player past the first, to 8 times its size
@@ -328,6 +336,12 @@ own stream, at most four a second, one counted per machine. A co-op
 game's flags also tell its clients whether the host is a dedicated server
 (`_network_game_cooperative_dedicated_bit`: its loading zones then ask for
 most of the living players).
+
+Then version 42 adds to a co-op client's skip vote
+(`distributed_coop_skip_vote`) whether its players hold accept to
+fast-forward the scene, sent every tick while the scene can be, and to the
+host's presentation (`distributed_coop_presentation`) the factor it runs at
+and how many of the machines showing the scene hold it (above).
 
 `port/linux/network_format.txt` records the wire format of the current
 version (`tools/network_format.py`): `test_linux_port.py` fails when the

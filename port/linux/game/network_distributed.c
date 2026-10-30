@@ -4906,7 +4906,9 @@ void network_distributed_handle_message(
 	}
 	/* (the host: a client's clock, by its messages' ticks; and its players'
 	predictions not taken while its game runs fast) */
-	if (machine_index != NONE)
+	/* port: not by a co-op skip vote's, sent every tick of a scene that holds the controls
+	when little else is sent (its clients would be taken for fast) */
+	if (machine_index != NONE && header.type != _distributed_message_coop_skip_vote)
 	{
 		distributed_note_client_clock(machine_index, header.game_time);
 		if ((header.type == _distributed_message_player_prediction ||

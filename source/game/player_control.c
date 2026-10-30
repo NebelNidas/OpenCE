@@ -181,6 +181,8 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#include "cseries/errors.h" /* port: the fast-forward's log line */
+#include "cseries/cseries_windows.h" /* port: system_milliseconds */
 #define limit2d limit2d_inline
 #include "game/game.h"
 #undef limit2d
@@ -369,6 +371,11 @@ static void get_local_player_input_blob(
 	struct input_blob *input);
 static void handle_one_player_input(
 	short local_player_index,
+	real time_delta_sec);
+static void player_control_fast_forward_note(
+	short local_player_index,
+	struct input_blob const *input);
+static void player_control_fast_forward_update(
 	real time_delta_sec);
 long player_control_get_desired_weapon(
 	short local_player_index,
@@ -625,6 +632,83 @@ static boolean player_control_port_menu_has_controller(
 		ui_widgets_active_for_local_player(gamepad_index);
 }
 
+/* port: holding accept (A, or the keyboard's jump key) for half a second fast-forwards
+a scene the player cannot skip: an unskippable cinematic, or one where the scripts hold
+the players' controls (player_enable_input false).
+Letting go, a menu or a pause ends it, the scripts' speed is kept (game_time_set_fast_forward).
+In network co-op the machines vote as on a skip (network_coop_fast_forward_hold). */
+#define PLAYER_CONTROL_FAST_FORWARD_FACTOR 6.0f
+#define PLAYER_CONTROL_FAST_FORWARD_HOLD_SECONDS 0.5f
+
+static struct
+{
+	boolean accept_held;
+	real held_seconds;
+	/* for the log, when it began */
+	long began_tick;
+	unsigned long began_milliseconds;
+} player_control_fast_forward;
+
+boolean player_control_fast_forward_scene(
+	void)
+{
+	if (game_time_menu_scene() || game_time_get_paused())
+		return FALSE;
+	if (cinematic_can_be_skipped() || network_coop_skip_offered())
+		return FALSE;
+	return cinematic_in_progress() || !player_input_enabled();
+}
+
+static void player_control_fast_forward_note(
+	short local_player_index,
+	struct input_blob const *input)
+{
+	if (input->accept && !player_control_port_menu_has_controller(local_player_index))
+		player_control_fast_forward.accept_held = TRUE;
+
+	return;
+}
+
+static void player_control_fast_forward_update(
+	real time_delta_sec)
+{
+	boolean held = player_control_fast_forward.accept_held && !ui_widgets_active();
+	boolean scene = player_control_fast_forward_scene();
+	boolean holding;
+	real factor;
+
+	/* only letting go resets the hold, a script may give the controls back for a tick
+	between cinematic_stop and taking them again */
+	player_control_fast_forward.accept_held = FALSE;
+	if (!held)
+		player_control_fast_forward.held_seconds = 0.0f;
+	else if (scene)
+		player_control_fast_forward.held_seconds += time_delta_sec;
+	holding = scene && player_control_fast_forward.held_seconds >= PLAYER_CONTROL_FAST_FORWARD_HOLD_SECONDS;
+	/* in network co-op the host sets it by vote */
+	if (network_coop_fast_forward_hold(holding, PLAYER_CONTROL_FAST_FORWARD_FACTOR))
+		return;
+	factor = holding ? PLAYER_CONTROL_FAST_FORWARD_FACTOR : 1.0f;
+	if (factor != game_time_get_fast_forward() && game_connection() == _game_connection_local)
+	{
+		if (holding)
+		{
+			player_control_fast_forward.began_tick = game_time_get();
+			player_control_fast_forward.began_milliseconds = system_milliseconds();
+			error(_error_silent, "fast-forward on at tick %ld", game_time_get());
+		}
+		else
+		{
+			error(_error_silent, "fast-forward off at tick %ld (%ld ticks in %lu ms)", game_time_get(),
+				game_time_get() - player_control_fast_forward.began_tick,
+				system_milliseconds() - player_control_fast_forward.began_milliseconds);
+		}
+		game_time_set_fast_forward(factor);
+	}
+
+	return;
+}
+
 static void handle_one_player_input(
 	short local_player_index,
 	real time_delta_sec)
@@ -660,6 +744,8 @@ static void handle_one_player_input(
 			player->desired_angles.yaw);
 	}
 
+	/* port: before the director keeps a cinematic's buttons from the player */
+	player_control_fast_forward_note(local_player_index, &input);
 	if (director_inhibited_input(local_player_index) ||
 		player_control_port_menu_has_controller(local_player_index))
 	{
@@ -869,6 +955,7 @@ boolean player_control_update(
 	{
 		handle_one_player_input(local_player_index, time_delta_sec);
 	}
+	player_control_fast_forward_update(time_delta_sec);
 	collision_log_end_period();
 	profile_exit(player_control_update_section);
 
@@ -1925,6 +2012,8 @@ void player_control_initialize_for_new_map(
 	player_control_globals->action_flags = 0;
 	player_control_globals->suppressed_action_flags = 0;
 	player_control_globals->flags = 0;
+	/* port: game_time_start ends a fast-forward */
+	csmemset(&player_control_fast_forward, 0, sizeof(player_control_fast_forward));
 
 	for (local_player_index = 0;
 		local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;

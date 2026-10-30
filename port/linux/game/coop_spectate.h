@@ -36,4 +36,9 @@ void coop_spectate_draw(
 void coop_skip_vote_draw(
 	short local_player_index);
 
+/* the scene's fast-forward (player_control.c): that it runs, and in network
+co-op how many machines hold it */
+void coop_fast_forward_draw(
+	short local_player_index);
+
 #endif

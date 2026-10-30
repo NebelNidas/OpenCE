@@ -1485,6 +1485,8 @@ void hud_draw_screen(
 		/* port: the network co-op vote to skip a cinematic */
 		if (cinematic_in_progress())
 			coop_skip_vote_draw(render.local_player_index);
+		/* port: and its fast-forward (player_control.c) */
+		coop_fast_forward_draw(render.local_player_index);
 
 		/* port: the match clock, in multiplayer */
 		if (game_engine_running() && !cinematic_in_progress() &&

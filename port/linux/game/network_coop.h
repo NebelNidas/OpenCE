@@ -140,6 +140,12 @@ network_coop_vote_skip returns FALSE outside network co-op, where the
 cinematic is skipped as usual. */
 boolean network_coop_skip_offered(void);
 boolean network_coop_vote_skip(void);
+/* player_control.c: whether this machine's players hold accept to fast-forward the scene,
+and how fast it would run; in network co-op the host sets it by vote, as on a skip.
+FALSE outside network co-op. */
+boolean network_coop_fast_forward_hold(boolean holding, real factor);
+/* the count to show while some machine holds it */
+boolean network_coop_fast_forward_status(short *holders, short *machines, boolean *on);
 /* main.c: after a co-op host reverts to its last saved state (to skip a
 cinematic, or because the mission failed); now is the game time before the
 revert */

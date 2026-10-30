@@ -118,6 +118,9 @@ struct game_time_globals_struct
 /* ---------- globals */
 
 static struct game_time_globals_struct *game_time_globals;
+/* port: the factor on the game's speed while the players fast-forward a scripted scene
+(player_control.c), apart from the game state and the scripts' speed */
+static real game_time_fast_forward = 1.0f;
 
 /* ---------- public code */
 
@@ -283,7 +286,7 @@ real game_time_get_tick_fraction(
 
 	if (!game_time_globals || !game_time_globals->active || game_time_globals->paused)
 		return 1.0f;
-	fraction = game_time_globals->leftover_dt * game_time_globals->speed * TICKS_PER_SECOND;
+	fraction = game_time_globals->leftover_dt * game_time_get_speed() * TICKS_PER_SECOND;
 	return PIN(fraction, 0.0f, 1.0f);
 }
 
@@ -293,10 +296,28 @@ real game_time_get_speed(
 	match_assert("c:\\halo\\SOURCE\\game\\game_time.c", 555, game_time_globals);
 
 	/* port: a client of another's game runs at the host's speed (its own
-	set before it joined too: cheats_network_client_enforce) */
+	set before it joined too: cheats_network_client_enforce), and
+	fast-forwards a co-op scene when the host does (network_coop.c) */
 	if (network_game_distributed_client())
-		return 1.0f;
-	return game_time_globals->speed;
+		return game_time_fast_forward;
+	return game_time_globals->speed * game_time_fast_forward;
+}
+
+/* port: a scripted scene's fast-forward factor, 1 for none (player_control.c) */
+void game_time_set_fast_forward(
+	real factor)
+{
+	if (!(factor >= 1.0f && factor <= 10.0f))
+		factor = 1.0f;
+	game_time_fast_forward = factor;
+
+	return;
+}
+
+real game_time_get_fast_forward(
+	void)
+{
+	return game_time_fast_forward;
 }
 
 void game_time_set_speed(
@@ -368,6 +389,7 @@ void game_time_start(
 	game_time_globals->speed = 1.f;
 	game_time_globals->leftover_dt = 0;
 	game_time_globals->active = TRUE;
+	game_time_fast_forward = 1.0f;
 
 	connection = game_connection();
 
@@ -399,7 +421,8 @@ void game_time_update(
 	{
 		long connection;
 		long ticks_elapsed;
-		real ticks_per_second = game_time_globals->speed*TICKS_PER_SECOND;
+		/* port: a co-op client's speed is the host's fast-forward */
+		real ticks_per_second = game_time_get_speed()*TICKS_PER_SECOND;
 
 		/* The native builds draw several frames per tick
 		(port/linux/game/render_interpolation.c). A frame that runs no tick has

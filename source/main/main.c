@@ -2071,8 +2071,11 @@ static void main_skip_private(
 {
 	if (main_globals.skip_ticks && cinematic_in_progress())
 	{
-		real saved_speed = game_time_get_speed();
+		real saved_speed;
 
+		/* port: a fast-forward ends with the skip (player_control.c) */
+		game_time_set_fast_forward(1.0f);
+		saved_speed = game_time_get_speed();
 		game_time_set_speed(1.0f);
 		while (main_globals.skip_ticks-- > 0)
 			game_time_update(1.0f / TICKS_PER_SECOND);

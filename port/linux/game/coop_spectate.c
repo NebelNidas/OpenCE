@@ -262,3 +262,27 @@ void coop_skip_vote_draw(
 	text[NUMBEROF(text) - 1] = 0;
 	draw_bottom_text(text);
 }
+
+void coop_fast_forward_draw(
+	short local_player_index)
+{
+	short holders, machines;
+	boolean on;
+	wchar_t text[96];
+
+	if (local_player_index != local_player_get_next(NONE))
+		return;
+	if (network_coop_fast_forward_status(&holders, &machines, &on))
+	{
+		if (on)
+			usnprintf(text, NUMBEROF(text) - 1, L"FAST-FORWARD   %d OF %d HOLDING", holders, machines);
+		else
+			usnprintf(text, NUMBEROF(text) - 1, L"HOLD SPACE OR A TO FAST-FORWARD   %d OF %d", holders, machines);
+	}
+	else if (game_time_get_fast_forward() > 1.0f)
+		usnprintf(text, NUMBEROF(text) - 1, L"FAST-FORWARD");
+	else
+		return;
+	text[NUMBEROF(text) - 1] = 0;
+	draw_bottom_text(text);
+}

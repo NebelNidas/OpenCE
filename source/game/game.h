@@ -193,6 +193,9 @@ boolean game_time_menu_scene(void);
 void game_time_set_paused(boolean paused);
 real game_time_get_speed(void);
 void game_time_set_speed(real speed);
+/* port: a scripted scene fast-forwarded, a factor on the speed (game_time.c) */
+void game_time_set_fast_forward(real factor);
+real game_time_get_fast_forward(void);
 void game_time_start(void);
 /* the game time set, before the first tick (a distributed game joined in
 progress: the host's) */

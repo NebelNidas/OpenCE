@@ -86,6 +86,7 @@ index and tag, since the map placed them at the same index everywhere.
 #include "game/game_allegiance.h"
 #include "game/game_engine.h"
 #include "game/players.h"
+#include "cseries/cseries_windows.h" /* system_milliseconds */
 #include "game/player_queues_new.h"
 #include "hs/hs.h"
 #include "hs/hs_library_external.h"
@@ -187,6 +188,8 @@ enum
 	/* After a skip the cutscene stays skippable until the script reaches
 	cinematic_skip_stop; votes still in flight must not skip it again. */
 	SKIP_COOLDOWN_TICKS = 2 * TICKS_PER_SECOND,
+	/* ms after which the host forgets a client's fast-forward hold it hasn't heard again */
+	FAST_FORWARD_HELD_MILLISECONDS = 1000,
 
 	/* a Pelican's Warthog drop: one Warthog for every this many players,
 	at most this many in all */
@@ -311,6 +314,12 @@ struct distributed_coop_presentation
 	make them, so a client's would leave the marines its enemies */
 	unsigned long ally_teams[GAME_ALLEGIANCE_BITVECTOR_LONGS];
 	unsigned long friendly_teams[GAME_ALLEGIANCE_BITVECTOR_LONGS];
+	/* the scene's fast-forward (player_control.c): its factor (0 or 1 none),
+	and how many of the machines showing it hold it */
+	byte fast_forward;
+	byte fast_forward_holders;
+	byte fast_forward_machines;
+	byte pad;
 };
 
 struct distributed_coop_presentation_message
@@ -438,11 +447,13 @@ struct distributed_coop_object_looks_message
 	struct distributed_coop_object_look looks[MAXIMUM_OBJECT_LOOKS_PER_MESSAGE];
 };
 
-/* a client's vote to skip the cinematic, sent every tick while it stands */
+/* a client's vote to skip the cinematic, and whether its players hold to
+fast-forward the scene, sent every tick while either can be */
 struct distributed_coop_skip_vote
 {
 	byte voted;
-	byte pad[3];
+	byte fast_forward;
+	byte pad[2];
 };
 
 struct distributed_coop_skip_vote_message
@@ -583,6 +594,23 @@ static struct
 	written (a skip reverts to it) */
 	boolean skip_save_written;
 } skip_vote;
+
+/* the scene's fast-forward, counted by the host like the skip vote,
+timed by its own clock since the game's runs faster while it is on */
+static struct
+{
+	/* this machine's players hold it (player_control.c) */
+	boolean holding;
+	real factor;
+	short holders;
+	short machines;
+	boolean on;
+	/* client: the host's factor while it is on */
+	real host_factor;
+	unsigned long client_heard_times[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+	boolean client_heard[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+	boolean client_held[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+} fast_forward;
 
 /* ---------- prototypes */
 
@@ -1411,6 +1439,50 @@ static void host_count_skip_votes(
 	}
 }
 
+/* host: fast-forwards the scene while more than half the machines showing it hold it */
+static void host_count_fast_forward(
+	void)
+{
+	long machine_indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+	short machine_count = distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
+	unsigned long now = system_milliseconds();
+	boolean on = FALSE;
+	short index;
+
+	fast_forward.machines = 0;
+	fast_forward.holders = 0;
+	if (player_control_fast_forward_scene())
+	{
+		/* the host counts too, unless it is a dedicated server with no player */
+		if (local_player_get_next(NONE) != NONE)
+		{
+			fast_forward.machines = 1;
+			fast_forward.holders = fast_forward.holding ? 1 : 0;
+		}
+		for (index = 0; index < machine_count; index++)
+		{
+			long machine_index = machine_indices[index];
+
+			if (!fast_forward.client_heard[machine_index] ||
+				now - fast_forward.client_heard_times[machine_index] > FAST_FORWARD_HELD_MILLISECONDS)
+			{
+				continue;
+			}
+			fast_forward.machines++;
+			if (fast_forward.client_held[machine_index])
+				fast_forward.holders++;
+		}
+		on = fast_forward.holders * 2 > fast_forward.machines;
+	}
+	if (on != fast_forward.on)
+	{
+		error(_error_silent, "co-op: fast-forward %s at tick %ld (%d of %d holding)", on ? "on" : "off",
+			game_time_get(), fast_forward.holders, fast_forward.machines);
+		fast_forward.on = on;
+	}
+	game_time_set_fast_forward(on ? fast_forward.factor : 1.0f);
+}
+
 /* the least speed (squared, world units a tick) of an object the cutscene
 camera films when the scripts don't name it */
 #define CAMERA_OBJECT_SPEED 0.01f
@@ -1501,6 +1573,9 @@ static void host_presentation(
 	SET_FLAG(presentation->flags, _presentation_skippable_bit, skip_vote.offered);
 	presentation->skip_votes = (byte)MIN(skip_vote.votes, 255);
 	presentation->skip_voters = (byte)MIN(skip_vote.voters, 255);
+	presentation->fast_forward = (byte)(fast_forward.on ? fast_forward.factor : 1.0f);
+	presentation->fast_forward_holders = (byte)MIN(fast_forward.holders, 255);
+	presentation->fast_forward_machines = (byte)MIN(fast_forward.machines, 255);
 
 	SET_FLAG(presentation->flags, _presentation_show_hud_bit, hud_scripted_globals->show_hud);
 	SET_FLAG(presentation->flags, _presentation_show_help_text_bit, hud_scripted_globals->show_hud_help_text);
@@ -2065,6 +2140,7 @@ void network_coop_new_game(
 	skip_vote.voters = 0;
 	skip_vote.cooldown_until = 0;
 	skip_vote.skip_save_written = FALSE;
+	csmemset(&fast_forward, 0, sizeof(fast_forward));
 	coop_enemies_new_game();
 	coop_pickups_new_game();
 	coop_vehicles_new_game();
@@ -2960,6 +3036,30 @@ boolean network_coop_vote_skip(
 	return TRUE;
 }
 
+boolean network_coop_fast_forward_hold(
+	boolean holding,
+	real factor)
+{
+	if (!coop_host() && !coop_client())
+		return FALSE;
+	fast_forward.holding = holding;
+	fast_forward.factor = factor;
+	return TRUE;
+}
+
+boolean network_coop_fast_forward_status(
+	short *holders,
+	short *machines,
+	boolean *on)
+{
+	if ((!coop_host() && !coop_client()) || fast_forward.machines <= 0 || fast_forward.holders <= 0)
+		return FALSE;
+	*holders = fast_forward.holders;
+	*machines = fast_forward.machines;
+	*on = fast_forward.on;
+	return TRUE;
+}
+
 /* The host reverted its game state, clock included. The clock is
 put back, since clients and the netcode expect it to only go forward, and
 the script threads' wake times move by the same amount so they still wake
@@ -3030,6 +3130,7 @@ void network_coop_host_tick(
 	coop_pickups_update();
 	coop_vehicles_update();
 	host_count_skip_votes();
+	host_count_fast_forward();
 	host_presentation(&message.presentation);
 	send_to_clients(&message, _distributed_message_coop_presentation, 1, sizeof(message.presentation));
 	host_send_device_groups();
@@ -3060,17 +3161,23 @@ void network_coop_client_tick(
 		client_cinematic_end();
 		client_host_camera_set(FALSE);
 		player_input_enable(TRUE);
+		fast_forward.on = FALSE;
 	}
-	/* sent every tick while a skip is offered, voted or not, because the
-	host only counts machines it hears from */
+	/* the host's fast-forward, only while this machine's clock is behind the newest host tick it heard of.
+	It hears of the end a one-way trip late, and running ahead of the host's clock looks like a speed hack. */
+	game_time_set_fast_forward(fast_forward.on && game_time_get() < coop_presentation.newest_time ?
+		fast_forward.host_factor : 1.0f);
+	/* sent every tick while a skip is offered or the scene can be fast-forwarded,
+	the host counts only machines it hears from */
 	if (!network_coop_skip_offered())
 		skip_vote.voted = FALSE;
-	else
+	if (network_coop_skip_offered() || player_control_fast_forward_scene())
 	{
 		struct distributed_coop_skip_vote_message message;
 
 		csmemset(&message.vote, 0, sizeof(message.vote));
 		message.vote.voted = skip_vote.voted;
+		message.vote.fast_forward = (byte)fast_forward.holding;
 		distributed_send(&message, _distributed_message_coop_skip_vote, 1, (word)sizeof(message), _distributed_to_host);
 	}
 }
@@ -3252,6 +3359,9 @@ void network_coop_handle_skip_vote(
 		return;
 	skip_vote.client_heard_times[machine_index] = game_time_get();
 	skip_vote.client_vote_times[machine_index] = vote->voted ? game_time_get() : NONE;
+	fast_forward.client_heard[machine_index] = TRUE;
+	fast_forward.client_heard_times[machine_index] = system_milliseconds();
+	fast_forward.client_held[machine_index] = vote->fast_forward != 0;
 }
 
 void network_coop_handle_device_groups(
@@ -3477,6 +3587,10 @@ static void client_presentation_apply(
 	skip_vote.offered = TEST_FLAG(presentation->flags, _presentation_skippable_bit);
 	skip_vote.votes = presentation->skip_votes;
 	skip_vote.voters = presentation->skip_voters;
+	fast_forward.on = presentation->fast_forward > 1;
+	fast_forward.host_factor = (real)presentation->fast_forward;
+	fast_forward.holders = presentation->fast_forward_holders;
+	fast_forward.machines = presentation->fast_forward_machines;
 	client_apply_hud_state(presentation);
 }
 

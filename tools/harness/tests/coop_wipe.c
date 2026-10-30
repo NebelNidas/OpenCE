@@ -67,6 +67,7 @@ static struct {int definition_indices[4];} client_script_sounds;
 static struct {int objective,nav_point_count;} host_hud_state;
 static struct {boolean offered,skip_save_written;int voters,cooldown_until;} skip_vote;
 static void skip_vote_clear(void){}
+static struct {boolean held;} fast_forward;
 static void coop_enemies_new_game(void){}
 static void coop_pickups_new_game(void){}
 static void coop_vehicles_new_game(void){}

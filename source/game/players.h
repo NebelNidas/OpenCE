@@ -270,6 +270,9 @@ void player_control_get_unit_camera_info(
 	struct player_control_unit_camera_info *camera_info);
 long player_control_get_aiming_unit_index(
 	short local_player_index);
+/* port: whether the scene can be fast-forwarded (player_control.c) */
+boolean player_control_fast_forward_scene(
+	void);
 long player_control_get_unit_index(
 	short local_player_index);
 short player_control_get_zoom_level(
