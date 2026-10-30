@@ -131,8 +131,8 @@ structure_bsp_definitions.hpp: structure_bsp 0x288, structure_bsp_lightmap
 0x20, structure_bsp_material 0x100; this build's structure_bsp_definitions.h
 has the same offsets). A material's vertices are uncompressed in Custom
 Edition caches (environment vertices of 56 bytes, then lightmap vertices of
-20), and it has lightmap vertices exactly when its lightmap has a bitmap
-(every map examined). */
+20), and it has lightmap vertices whenever its lightmap has a bitmap
+(every map examined), without one none or one for each vertex. */
 #define STRUCTURE_BSP_BYTES 0x288
 #define STRUCTURE_BSP_LIGHTMAPS_OFFSET 0x104
 #define STRUCTURE_BSP_LIGHTMAP_BYTES 0x20
@@ -1779,7 +1779,7 @@ static int unit_vectors_valid(
 `bsp`, which load at `address`) and their materials, whose vertices are
 converted for this build when the BSP is loaded (custom_edition_cache.h):
 each material's uncompressed vertices within the BSP, of the size its vertex
-counts give, and lightmap vertices exactly when its lightmap has a bitmap. */
+counts give, and lightmap vertices whenever its lightmap has a bitmap. */
 static enum cache_file_status structure_bsp_geometry_verify(
 	struct load_state *state,
 	uint8_t const *bsp,
@@ -1834,7 +1834,9 @@ static enum cache_file_status structure_bsp_geometry_verify(
 			if (read_s16(material + STRUCTURE_BSP_MATERIAL_VERTEX_TYPE_OFFSET) != VERTEX_TYPE_ENVIRONMENT_UNCOMPRESSED ||
 				vertex_count < 0 ||
 				vertex_count > MAXIMUM_VERTICES_PER_STRUCTURE_MATERIAL ||
-				lightmap_vertex_count != (has_bitmap ? vertex_count : 0) ||
+				/* lightmap vertices without a lightmap: placeholder BSPs of
+				Custom Edition maps */
+				(lightmap_vertex_count != vertex_count && (has_bitmap || lightmap_vertex_count)) ||
 				vertices_size != vertex_count * STRUCTURE_BSP_ENVIRONMENT_VERTEX_BYTES +
 					lightmap_vertex_count * STRUCTURE_BSP_LIGHTMAP_VERTEX_BYTES ||
 				(vertices_size &&

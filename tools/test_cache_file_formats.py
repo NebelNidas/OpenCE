@@ -863,7 +863,8 @@ BAD_BSP_GEOMETRY = "a structure BSP's lightmaps or their materials do not have t
 MALFORMED_BSP_MATERIALS = {
     "compressed vertices": {"vertex_type": 1},
     "vertex data of the wrong size": {"vertices_size": 3 * 56},
-    "lightmap vertices without a lightmap": {"bitmap_index": -1},
+    "lightmap vertices of another count without a lightmap": {"bitmap_index": -1, "lightmap_vertex_count": 1,
+                                                              "vertices_size": 3 * 56 + 1 * 20},
     "no lightmap vertices with a lightmap": {"lightmap_vertex_count": 0},
     "vertices beyond the BSP": {"vertices_offset": 0xF80},
     "vertices unaligned": {"vertices_offset": 0x3C2},
@@ -878,6 +879,15 @@ def test_malformed_structure_bsp_materials_are_rejected(report_tool, tmp_path, c
     returncode, report, _ = converted(report_tool, Map(bsp_material=MALFORMED_BSP_MATERIALS[case]), tmp_path)
     assert returncode == 1
     assert report["load"] == BAD_BSP_GEOMETRY
+
+
+@pytest.mark.parametrize("material", [{"bitmap_index": -1},
+                                      {"bitmap_index": -1, "lightmap_vertex_count": 0, "vertices_size": 3 * 56}])
+def test_structure_bsp_materials_without_a_lightmap_load(report_tool, tmp_path, material):
+    """a material whose lightmap has no bitmap, with no lightmap vertices or one per vertex,
+    as in placeholder BSPs of Custom Edition maps"""
+    returncode, report, _ = converted(report_tool, Map(bsp_material=material), tmp_path)
+    assert returncode == 0 and report["structure_bsp_materials_checked"] == "1"
 
 
 @pytest.mark.parametrize("vertex_count, loads", [(64000, True), (64001, False)])
