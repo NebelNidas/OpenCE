@@ -4232,9 +4232,12 @@ void objects_scripting_attach(
 	long child_object_index,
 	char const *child_marker_name)
 {
+	/* port: not a weapon put away in a unit's inventory (no parent, not
+	connected to the map), which object_attach_to_marker asserts on */
 	if (parent_object_index!=NONE &&
 		child_object_index !=NONE &&
-		object_get(child_object_index)->object.parent_object_index==NONE)
+		object_get(child_object_index)->object.parent_object_index==NONE &&
+		TEST_FLAG(object_get(child_object_index)->object.flags, _object_connected_to_map_bit))
 	{
 		network_coop_note_attach(parent_object_index, parent_marker_name, child_object_index, child_marker_name);
 		object_attach_to_marker(parent_object_index, parent_marker_name, child_object_index, child_marker_name);
