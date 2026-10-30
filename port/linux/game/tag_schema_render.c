@@ -1299,9 +1299,10 @@ static boolean bitmap_group_check(
 		for (bitmap_index = 0; bitmap_index < group->bitmaps.count; bitmap_index++)
 		{
 			struct bitmap_data *bitmap = (struct bitmap_data *)group->bitmaps.address + bitmap_index;
-			unsigned long offset = (unsigned long)group->pixel_data.file_offset + (unsigned long)bitmap->pixels_offset;
+			/* as the texture cache adds them, in 32 bits */
+			unsigned int offset = (unsigned int)group->pixel_data.file_offset + (unsigned int)bitmap->pixels_offset;
 
-			if (offset > (unsigned long)LONG_MAX ||
+			if (offset < (unsigned int)bitmap->pixels_offset ||
 				!tag_validate_file_contains(validation, (long)offset, bitmap->pixels_size) ||
 				!tag_validate_file_contains(validation, (long)offset, bitmap_read_pixel_data_size(bitmap)))
 			{

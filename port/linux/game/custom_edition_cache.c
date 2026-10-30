@@ -16,7 +16,9 @@ and custom_edition_geometry.c convert the rest with the game's own
 functions.
 Every read the game makes of the map (structure BSPs, bitmap pixels, sound
 samples) is served from the map, bitmaps.map or sounds.map according to
-where its offset falls in their combined offset space.
+where its offset falls in their combined offset space. A resource map larger
+than its part of that space has only the resources the map uses packed from
+bitmaps.map's offset on, found again through a table.
 */
 
 /* ---------- headers */
@@ -54,6 +56,9 @@ after the largest map it takes, bitmaps.map, sounds.map */
 #define COMBINED_BITMAPS_OFFSET 0x40000000UL
 #define COMBINED_SOUNDS_OFFSET 0x60000000UL
 #define COMBINED_OFFSET_LIMIT 0x80000000UL
+/* packed resources go on past it: every reader takes their offsets unsigned
+or only passes them on */
+#define COMBINED_PACKED_LIMIT 0xFFFFFFFFUL
 
 /* The renderer write-protects the memory it has made textures of and learns
 of changes to it from the faults writes take (port/linux/src/memory_watch.c);
@@ -68,6 +73,14 @@ struct custom_edition_file
 {
 	FILE *stream;
 	struct cache_file_source source;
+};
+
+struct packed_resource
+{
+	uint32_t offset;
+	uint32_t size;
+	uint32_t file_offset;
+	enum resource_map_type type;
 };
 
 struct custom_edition_cache_globals
@@ -90,6 +103,12 @@ struct custom_edition_cache_globals
 	struct custom_edition_file resource_files[NUMBER_OF_RESOURCE_MAP_TYPES];
 	struct resource_map resource_map_storage[NUMBER_OF_RESOURCE_MAP_TYPES];
 	struct resource_map *resource_maps[NUMBER_OF_RESOURCE_MAP_TYPES];
+	/* by offset, when a resource map is larger than its part of the space */
+	boolean resources_packed;
+	struct packed_resource *packed;
+	long packed_count;
+	long packed_capacity;
+	uint32_t packed_end;
 	byte read_staging[READ_STAGING_BYTES];
 };
 
@@ -539,8 +558,87 @@ static void custom_edition_cache_files_close(
 	}
 	custom_edition_file_close(&globals->map);
 	globals->map_path[0] = 0;
+	if (globals->packed)
+		free(globals->packed);
+	globals->packed = NULL;
+	globals->packed_count = 0;
+	globals->packed_capacity = 0;
+	globals->resources_packed = FALSE;
 
 	return;
+}
+
+/* joins the previous piece when it continues it in the same file */
+static uint32_t custom_edition_resource_pack(
+	void *context,
+	enum resource_map_type type,
+	uint32_t file_offset,
+	uint32_t size)
+{
+	struct custom_edition_cache_globals *globals = context;
+	struct packed_resource *last = globals->packed_count ? &globals->packed[globals->packed_count - 1] : NULL;
+	uint32_t offset = globals->packed_end;
+
+	if (size > COMBINED_PACKED_LIMIT - offset)
+	{
+		return CUSTOM_EDITION_RESOURCE_UNPLACED;
+	}
+	if (last && last->type == type && last->file_offset + last->size == file_offset)
+	{
+		last->size += size;
+	}
+	else
+	{
+		if (globals->packed_count == globals->packed_capacity)
+		{
+			long capacity = globals->packed_capacity ? globals->packed_capacity * 2 : 1024;
+			struct packed_resource *packed = realloc(globals->packed, (size_t)capacity * sizeof(*packed));
+
+			if (!packed)
+			{
+				return CUSTOM_EDITION_RESOURCE_UNPLACED;
+			}
+			globals->packed = packed;
+			globals->packed_capacity = capacity;
+		}
+		last = &globals->packed[globals->packed_count++];
+		last->offset = offset;
+		last->size = size;
+		last->file_offset = file_offset;
+		last->type = type;
+	}
+	globals->packed_end = offset + size;
+
+	return offset;
+}
+
+static struct packed_resource const *custom_edition_packed_resource(
+	uint32_t offset)
+{
+	struct custom_edition_cache_globals const *globals = &custom_edition_cache_globals;
+	long low = 0;
+	long high = globals->packed_count;
+
+	while (low < high)
+	{
+		long middle = low + (high - low) / 2;
+		struct packed_resource const *resource = &globals->packed[middle];
+
+		if (offset < resource->offset)
+		{
+			high = middle;
+		}
+		else if (offset - resource->offset >= resource->size)
+		{
+			low = middle + 1;
+		}
+		else
+		{
+			return resource;
+		}
+	}
+
+	return NULL;
 }
 
 /* Converts the loaded map's models for this build from its model data,
@@ -631,12 +729,17 @@ static boolean custom_edition_cache_tags_validate(
 	ranges[range_count++].size = report->identity.file_length;
 	ranges[range_count].offset = COMBINED_DECODED_OFFSET;
 	ranges[range_count++].size = custom_edition_sounds_decoded_bytes();
-	if (globals->resource_files[_resource_map_bitmaps].stream)
+	if (globals->resources_packed)
+	{
+		ranges[range_count].offset = COMBINED_BITMAPS_OFFSET;
+		ranges[range_count++].size = globals->packed_end - COMBINED_BITMAPS_OFFSET;
+	}
+	else if (globals->resource_files[_resource_map_bitmaps].stream)
 	{
 		ranges[range_count].offset = COMBINED_BITMAPS_OFFSET;
 		ranges[range_count++].size = globals->resource_files[_resource_map_bitmaps].source.size;
 	}
-	if (globals->resource_files[_resource_map_sounds].stream)
+	if (!globals->resources_packed && globals->resource_files[_resource_map_sounds].stream)
 	{
 		ranges[range_count].offset = COMBINED_SOUNDS_OFFSET;
 		ranges[range_count++].size = globals->resource_files[_resource_map_sounds].source.size;
@@ -689,11 +792,28 @@ static boolean custom_edition_cache_tags_convert(
 			regrouped);
 	}
 	
-	custom_edition_cache_combine_resource_offsets(
-		tag_cache,
-		loaded_bytes,
-		COMBINED_BITMAPS_OFFSET,
-		COMBINED_SOUNDS_OFFSET);
+	if (custom_edition_cache_globals.resources_packed)
+	{
+		struct custom_edition_cache_globals *globals = &custom_edition_cache_globals;
+
+		globals->packed_end = COMBINED_BITMAPS_OFFSET;
+		if (!custom_edition_cache_place_resources(tag_cache, loaded_bytes, custom_edition_resource_pack, globals))
+		{
+			error(_error_silent, "custom edition: the resources the map uses do not fit in 0x%lX bytes",
+				(unsigned long)(COMBINED_PACKED_LIMIT - COMBINED_BITMAPS_OFFSET));
+			return FALSE;
+		}
+		error(_error_silent, "custom edition: the map's resources packed into 0x%lX bytes (%ld pieces), a resource map being larger than its range",
+			(unsigned long)(globals->packed_end - COMBINED_BITMAPS_OFFSET), globals->packed_count);
+	}
+	else
+	{
+		custom_edition_cache_combine_resource_offsets(
+			tag_cache,
+			loaded_bytes,
+			COMBINED_BITMAPS_OFFSET,
+			COMBINED_SOUNDS_OFFSET);
+	}
 	/* (before the conversion, which silences sounds this build cannot play) */
 	custom_edition_sounds_decode(tag_cache, loaded_bytes, (long)COMBINED_DECODED_OFFSET,
 		COMBINED_BITMAPS_OFFSET - COMBINED_DECODED_OFFSET);
@@ -1182,15 +1302,11 @@ struct cache_file_tag_header *custom_edition_cache_tags_load(
 
 	/* the combined offset space serves bitmaps.map and sounds.map after the
 	map itself */
-	if ((globals->resource_files[_resource_map_bitmaps].stream &&
+	globals->resources_packed =
+		(globals->resource_files[_resource_map_bitmaps].stream &&
 		globals->resource_files[_resource_map_bitmaps].source.size > COMBINED_SOUNDS_OFFSET - COMBINED_BITMAPS_OFFSET) ||
 		(globals->resource_files[_resource_map_sounds].stream &&
-		globals->resource_files[_resource_map_sounds].source.size > COMBINED_OFFSET_LIMIT - COMBINED_SOUNDS_OFFSET))
-	{
-		error(_error_silent, "custom edition: a resource map is too large for this loader");
-		custom_edition_cache_files_close();
-		return NULL;
-	}
+		globals->resource_files[_resource_map_sounds].source.size > COMBINED_OFFSET_LIMIT - COMBINED_SOUNDS_OFFSET);
 
 	status = custom_edition_cache_load(
 		&globals->map.source,
@@ -1303,6 +1419,72 @@ struct resource_map const *custom_edition_cache_bitmap_resources(void)
 		custom_edition_cache_globals.resource_maps[_resource_map_bitmaps] : NULL;
 }
 
+static boolean custom_edition_file_read_staged(
+	struct custom_edition_file *file,
+	unsigned long file_offset,
+	long size,
+	void *buffer)
+{
+	struct custom_edition_cache_globals *globals = &custom_edition_cache_globals;
+	boolean read = file->stream && size >= 0;
+	long read_bytes;
+
+	for (read_bytes = 0; read && read_bytes < size; read_bytes += READ_STAGING_BYTES)
+	{
+		long chunk_bytes = MIN(size - read_bytes, READ_STAGING_BYTES);
+
+		read = file->source.read(file->source.context, file_offset + read_bytes, (uint32_t)chunk_bytes, globals->read_staging);
+		if (read)
+		{
+			csmemcpy((byte *)buffer + read_bytes, globals->read_staging, chunk_bytes);
+		}
+	}
+
+	return read;
+}
+
+/* a read may cross from one packed resource into the next */
+static void custom_edition_packed_read(
+	long tag_index,
+	long offset,
+	long size,
+	void *buffer)
+{
+	struct custom_edition_cache_globals *globals = &custom_edition_cache_globals;
+	boolean read = size >= 0;
+	long read_bytes = 0;
+
+	while (read && read_bytes < size)
+	{
+		uint32_t at = (uint32_t)offset + (uint32_t)read_bytes;
+		struct packed_resource const *resource = custom_edition_packed_resource(at);
+		long chunk_bytes;
+
+		read = resource != NULL;
+		if (read)
+		{
+			chunk_bytes = (long)MIN((unsigned long)(size - read_bytes), (unsigned long)(resource->offset + resource->size - at));
+			read = custom_edition_file_read_staged(&globals->resource_files[resource->type],
+				resource->file_offset + (at - resource->offset), chunk_bytes, (byte *)buffer + read_bytes);
+			read_bytes += chunk_bytes;
+		}
+	}
+	if (!read)
+	{
+		error(_error_silent, "custom edition: cannot read 0x%lX bytes at 0x%08lX", (unsigned long)size, (unsigned long)offset);
+		if (size > 0)
+		{
+			csmemset(buffer, 0, size);
+		}
+	}
+	else if (tag_index != NONE)
+	{
+		custom_edition_bitmap_pixels_arrived(globals->tag_cache, globals->loaded_bytes, tag_index, offset, buffer);
+	}
+
+	return;
+}
+
 void custom_edition_cache_read(
 	long tag_index,
 	long offset,
@@ -1312,9 +1494,13 @@ void custom_edition_cache_read(
 	struct custom_edition_cache_globals *globals = &custom_edition_cache_globals;
 	struct custom_edition_file *file;
 	unsigned long file_offset;
-	long read_bytes;
 	boolean read;
 
+	if (globals->resources_packed && (unsigned long)offset >= COMBINED_BITMAPS_OFFSET)
+	{
+		custom_edition_packed_read(tag_index, offset, size, buffer);
+		return;
+	}
 	if ((unsigned long)offset >= COMBINED_SOUNDS_OFFSET)
 	{
 		file = &globals->resource_files[_resource_map_sounds];
@@ -1340,17 +1526,7 @@ void custom_edition_cache_read(
 	/* the game reads its map from its main thread only (scenario and
 	structure BSP loading, the texture and sound caches), so the streams and
 	the staging buffer need no lock */
-	read = file->stream && size >= 0;
-	for (read_bytes = 0; read && read_bytes < size; read_bytes += READ_STAGING_BYTES)
-	{
-		long chunk_bytes = MIN(size - read_bytes, READ_STAGING_BYTES);
-
-		read = file->source.read(file->source.context, file_offset + read_bytes, (uint32_t)chunk_bytes, globals->read_staging);
-		if (read)
-		{
-			csmemcpy((byte *)buffer + read_bytes, globals->read_staging, chunk_bytes);
-		}
-	}
+	read = custom_edition_file_read_staged(file, file_offset, size, buffer);
 	if (!read)
 	{
 		/* the loader checked every range the tags give, so this is an I/O

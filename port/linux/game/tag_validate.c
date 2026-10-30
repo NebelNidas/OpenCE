@@ -1813,7 +1813,8 @@ boolean tag_validate_file_contains(
 	short range_index;
 
 	(void)validation;
-	if (offset < 0 || size < 0)
+	/* an offset past LONG_MAX may be a packed resource's (custom_edition_cache.c) */
+	if (size < 0)
 		return FALSE;
 	for (range_index = 0; range_index < tag_validate_globals.file_range_count; range_index++)
 	{

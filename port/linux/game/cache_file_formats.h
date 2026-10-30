@@ -530,4 +530,22 @@ typedef void (*custom_edition_structure_bsp_proc)(
 void custom_edition_structure_bsp_proc_set(
 	custom_edition_structure_bsp_proc proc);
 
+#define CUSTOM_EDITION_RESOURCE_UNPLACED 0xFFFFFFFFUL
+
+/* where in the combined space `size` bytes at `file_offset` of a resource map
+go, CUSTOM_EDITION_RESOURCE_UNPLACED if there is no room */
+typedef uint32_t (*custom_edition_resource_place)(
+	void *context,
+	enum resource_map_type type,
+	uint32_t file_offset,
+	uint32_t size);
+
+/* like custom_edition_cache_combine_resource_offsets with each offset from
+`place`, 0 when one found no room, which is left as it was */
+int custom_edition_cache_place_resources(
+	uint8_t *tag_cache,
+	uint32_t loaded_bytes,
+	custom_edition_resource_place place,
+	void *context);
+
 #endif

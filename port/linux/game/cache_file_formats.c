@@ -3895,13 +3895,47 @@ enum cache_file_status custom_edition_cache_convert(
 	return _cache_file_status_ok;
 }
 
+struct resource_offsets
+{
+	uint32_t bitmaps_offset;
+	uint32_t sounds_offset;
+};
+
+static uint32_t resource_offset_moved(
+	void *context,
+	enum resource_map_type type,
+	uint32_t file_offset,
+	uint32_t size)
+{
+	struct resource_offsets const *offsets = context;
+
+	(void)size;
+	return file_offset + (type == _resource_map_sounds ? offsets->sounds_offset : offsets->bitmaps_offset);
+}
+
 void custom_edition_cache_combine_resource_offsets(
 	uint8_t *tag_cache,
 	uint32_t loaded_bytes,
 	uint32_t bitmaps_offset,
 	uint32_t sounds_offset)
 {
+	struct resource_offsets offsets;
+
+	offsets.bitmaps_offset = bitmaps_offset;
+	offsets.sounds_offset = sounds_offset;
+	custom_edition_cache_place_resources(tag_cache, loaded_bytes, resource_offset_moved, &offsets);
+
+	return;
+}
+
+int custom_edition_cache_place_resources(
+	uint8_t *tag_cache,
+	uint32_t loaded_bytes,
+	custom_edition_resource_place place,
+	void *context)
+{
 	struct load_state state;
+	int placed = 1;
 	uint8_t const *instances;
 	int32_t tag_count;
 	int32_t tag_index;
@@ -3910,7 +3944,7 @@ void custom_edition_cache_combine_resource_offsets(
 	instances = loaded_tag_instances(&state, &tag_count);
 	if (!instances)
 	{
-		return;
+		return placed;
 	}
 	for (tag_index = 0; tag_index < tag_count; tag_index++)
 	{
@@ -3943,9 +3977,16 @@ void custom_edition_cache_combine_resource_offsets(
 
 				if (flag_is_set(flags, BITMAP_DATA_IN_RESOURCE_MAP_BIT))
 				{
-					write_u32(
-						bitmap + BITMAP_DATA_PIXELS_OFFSET_OFFSET,
-						read_u32(bitmap + BITMAP_DATA_PIXELS_OFFSET_OFFSET) + bitmaps_offset);
+					uint32_t offset = place(context, _resource_map_bitmaps,
+						read_u32(bitmap + BITMAP_DATA_PIXELS_OFFSET_OFFSET),
+						read_u32(bitmap + BITMAP_DATA_PIXELS_SIZE_OFFSET));
+
+					if (offset == CUSTOM_EDITION_RESOURCE_UNPLACED)
+					{
+						placed = 0;
+						continue;
+					}
+					write_u32(bitmap + BITMAP_DATA_PIXELS_OFFSET_OFFSET, offset);
 					write_u16(bitmap + BITMAP_DATA_FLAGS_OFFSET, (uint16_t)(flags & ~(1U << BITMAP_DATA_IN_RESOURCE_MAP_BIT)));
 				}
 			}
@@ -3993,9 +4034,16 @@ void custom_edition_cache_combine_resource_offsets(
 
 					if (flag_is_set(flags, SOUND_SAMPLES_IN_RESOURCE_MAP_BIT))
 					{
-						write_u32(
-							samples + TAG_DATA_FILE_OFFSET_OFFSET,
-							read_u32(samples + TAG_DATA_FILE_OFFSET_OFFSET) + sounds_offset);
+						uint32_t offset = place(context, _resource_map_sounds,
+							read_u32(samples + TAG_DATA_FILE_OFFSET_OFFSET),
+							read_u32(samples + TAG_DATA_SIZE_OFFSET));
+
+						if (offset == CUSTOM_EDITION_RESOURCE_UNPLACED)
+						{
+							placed = 0;
+							continue;
+						}
+						write_u32(samples + TAG_DATA_FILE_OFFSET_OFFSET, offset);
 						write_u32(samples + TAG_DATA_FLAGS_OFFSET, flags & ~(1UL << SOUND_SAMPLES_IN_RESOURCE_MAP_BIT));
 					}
 				}
@@ -4003,5 +4051,5 @@ void custom_edition_cache_combine_resource_offsets(
 		}
 	}
 
-	return;
+	return placed;
 }
