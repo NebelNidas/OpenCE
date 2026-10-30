@@ -105,6 +105,10 @@ static const struct config_setting config_settings[] =
 		"\"borderless\" is a window over the whole desktop, \"windowed\" a window\n"
 		"(display.window_size). Empty: display.fullscreen's (true: borderless).\n"
 		"F11 switches to the window and back." },
+	{ "display.monitor", _config_integer, "0", "HALO_MONITOR", _environment_value, _platform_desktop,
+		"The display the game opens on: 0 the primary one, 1, 2, ... the system's\n"
+		"displays in order (one that is not there: the primary). From the next\n"
+		"start." },
 	{ "display.resolution", _config_string, "\"native\"", "HALO_RESOLUTION", _environment_value, _platform_desktop,
 		"What fullscreen and borderless draw at: \"native\", the display's own, or\n"
 		"\"<width>x<height>\" (\"1920x1080\"), 640x480 or more. Fullscreen sets the\n"

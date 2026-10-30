@@ -677,6 +677,31 @@ static void platform_window_size_setting(long *width, long *height)
 	}
 }
 
+/* display.monitor: 1, 2, ... the displays in SDL's order, 0 or a missing one the primary */
+static SDL_DisplayID platform_display_chosen(void)
+{
+	static long logged = -1;
+	long monitor = config_integer("display.monitor");
+	SDL_DisplayID display = 0;
+	int count = 0;
+
+	if (monitor > 0)
+	{
+		SDL_DisplayID *displays = SDL_GetDisplays(&count);
+
+		if (displays && monitor <= count)
+			display = displays[monitor - 1];
+		SDL_free(displays);
+		if (monitor != logged)
+		{
+			logged = monitor;
+			platform_log("display.monitor %ld of %d displays: %s", monitor, count,
+				display ? SDL_GetDisplayName(display) : "not there, the primary instead");
+		}
+	}
+	return display ? display : SDL_GetPrimaryDisplay();
+}
+
 /* a display's own size in pixels (its desktop mode) */
 static BOOL platform_display_size(SDL_DisplayID display, long *width, long *height)
 {
@@ -791,7 +816,7 @@ BOOL platform_screen_mode(long *width, long *height)
 			return FALSE;
 		fullscreen = platform_fullscreen_setting();
 		platform_window_size_setting(width, height);
-		if (fullscreen && !platform_display_size(SDL_GetPrimaryDisplay(), width, height))
+		if (fullscreen && !platform_display_size(platform_display_chosen(), width, height))
 			return FALSE;
 	}
 	/* (fullscreen's display is at the resolution already, where it has that
@@ -837,7 +862,7 @@ int platform_display_resolutions(long *widths, long *heights, int maximum)
 		return 0;
 	display = platform_window ? SDL_GetDisplayForWindow(platform_window) : 0;
 	if (!display)
-		display = SDL_GetPrimaryDisplay();
+		display = platform_display_chosen();
 	if (!platform_display_size(display, &display_width, &display_height))
 		return 0;
 	modes = SDL_GetFullscreenDisplayModes(display, &mode_count);
@@ -897,7 +922,7 @@ int platform_window_sizes(long *widths, long *heights, int maximum)
 		return 0;
 	display = platform_window ? SDL_GetDisplayForWindow(platform_window) : 0;
 	if (!display)
-		display = SDL_GetPrimaryDisplay();
+		display = platform_display_chosen();
 	if (!display || !SDL_GetDisplayUsableBounds(display, &usable))
 		usable.w = usable.h = 0;
 	for (index = 0; index < (int)(sizeof(platform_window_sizes_offered) / sizeof(*platform_window_sizes_offered));
@@ -1278,10 +1303,26 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	(void)width;
 	(void)height;
 	platform_window_size_setting(&platform_window_width, &platform_window_height);
-	platform_window = SDL_CreateWindow("Halo", (int)platform_window_width, (int)platform_window_height,
-		SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
-		(config_boolean("debug.hidden_window") ? SDL_WINDOW_HIDDEN : 0) |
-		(platform_fullscreen_setting() ? SDL_WINDOW_FULLSCREEN : 0));
+	{
+		/* centred on display.monitor's display where that is not the primary */
+		SDL_DisplayID display = platform_display_chosen();
+		SDL_PropertiesID properties = SDL_CreateProperties();
+
+		SDL_SetStringProperty(properties, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Halo");
+		if (display != SDL_GetPrimaryDisplay())
+		{
+			SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
+			SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
+		}
+		SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, platform_window_width);
+		SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, platform_window_height);
+		SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, (Sint64)(SDL_WINDOW_OPENGL |
+			SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+			(config_boolean("debug.hidden_window") ? SDL_WINDOW_HIDDEN : 0) |
+			(platform_fullscreen_setting() ? SDL_WINDOW_FULLSCREEN : 0)));
+		platform_window = SDL_CreateWindowWithProperties(properties);
+		SDL_DestroyProperties(properties);
+	}
 #endif
 	if (!platform_window)
 	{
