@@ -2582,6 +2582,9 @@ union real_rgb_color *real_hsv_color_to_real_rgb_color(
 
 	switch (sector)
 	{
+	/* port: hue 1 is hue 0, else the result is left unwritten (an hsv
+	interpolation from a bound of hue 0 gives exactly 1 at factor 0 or 1) */
+	case 6:
 	case 0:
 		rgb->red = source->value;
 		rgb->green = t;
