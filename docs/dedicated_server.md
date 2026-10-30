@@ -210,7 +210,10 @@ players. A `drain` event says each (`after`: `now`, `game`, `empty` or
 A co-op entry (`<level>:coop`) is ended as a game is: by `sv_end_game`,
 `sv_map_next`, `sv_map`, `server.empty_seconds` and `server.idle_minutes`.
 It has no scores: the server goes back to the lobby at once (no postgame),
-and a level won ends it with `game_ended`'s reason `score`.
+and a level won ends it with `game_ended`'s reason `score`. Next comes the
+campaign's next level (after The Maw, The Pillar of Autumn), as an `sv_map`
+would. If the owner chose the next game, or the level is not one of the
+campaign's, the rotation goes on after the entry played before.
 
 `sv_set` (and the settings of the web page, `PUT /api/settings`) changes
 these settings, which `sv_settings` and `GET /api/settings` list:

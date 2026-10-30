@@ -700,6 +700,40 @@ static void server_end_cooperative(
 	}
 }
 
+/* the level after a won co-op level (network_game_server_port_cooperative_won),
+played before the rotation goes on, as on a listen host.
+Not when it is the level just played (one not in the campaign repeats)
+or the owner chose the next game. */
+static void server_cooperative_next(
+	char const *level)
+{
+	struct server_entry entry;
+	char text[SERVER_ENTRY_TEXT_SIZE];
+
+	if (server.has_interposed || !csstrcasecmp(level, server.current.level))
+		return;
+	snprintf(text, sizeof(text), "%s:coop", level);
+	if (server_rotation_parse_entry(text, (int)strlen(text), &entry))
+	{
+		server_rotation_resolve(&entry);
+		server_gametype_check_entry(&entry);
+	}
+	else
+	{
+		snprintf(entry.rejected, sizeof(entry.rejected), "not an entry");
+	}
+	if (entry.rejected[0])
+	{
+		server_log(_server_log_warning, "lobby", "the level named next, %s, cannot be played (%s): the rotation goes on",
+			level, entry.rejected);
+		return;
+	}
+	server.interposed = entry;
+	server.has_interposed = TRUE;
+	server_log(_server_log_info, "lobby", "the level won names %s next: played before the rotation goes on",
+		entry.map_name);
+}
+
 boolean server_director_end_game(
 	short reason,
 	boolean skip_postgame)
@@ -2275,16 +2309,24 @@ void server_update(
 		{
 			/* (a co-op level won: network_game_server_port_cooperative_won
 			took every machine to the lobby at once) */
+			char won_next[SERVER_MAP_SIZE] = "";
+
 			if (server.state == _server_state_playing && server_cooperative() && !server.game_over_said)
 			{
+				struct network_game *game = server_game();
+
 				if (!server.end_asked)
 					server.end_reason = _server_end_score;
 				server.skip_postgame = TRUE;
 				server_game_over();
+				if (game)
+					snprintf(won_next, sizeof(won_next), "%s", game->map.name);
 			}
 			if (server.state != _server_state_postgame)
 				server_log(_server_log_info, "game", "back in the lobby");
 			server_back_in_lobby();
+			if (won_next[0])
+				server_cooperative_next(won_next);
 		}
 		if (server.state == _server_state_hosting || server.state == _server_state_waiting)
 			server_set_state(_server_state_lobby);
