@@ -194,6 +194,7 @@ static void object_name_list_free(void);
 static void object_name_list_clear(void);
 static void object_name_list_new(long object_index, short name_index);
 static void object_name_list_delete(long object_index);
+static void object_name_list_forget(long object_index);
 static long object_name_list_lookup(short name_index);
 static long recursive_object_adder(
 	long object_index,
@@ -4872,18 +4873,27 @@ static void object_name_list_delete(
 
 	if (object->object.name_index!=NONE)
 	{
-		short i;
-		struct scenario *scenario = global_scenario_get();
 		object->object.name_index = NONE;
+		object_name_list_forget(object_index);
+	}
 
-		/* port: no more than the name list holds (a map's count, which a short
-		counter would never reach; retail has up to 448) */
-		for (i =0; i<MIN(scenario->object_names.count, MAXIMUM_OBJECT_NAMES_PER_SCENARIO); ++i)
+	return;
+}
+
+/* port: every name that holds the object */
+static void object_name_list_forget(
+	long object_index)
+{
+	struct scenario *scenario = global_scenario_get();
+	short i;
+
+	/* port: no more than the name list holds (a map's count, which a short
+	counter would never reach; retail has up to 448) */
+	for (i = 0; i<MIN(scenario->object_names.count, MAXIMUM_OBJECT_NAMES_PER_SCENARIO); ++i)
+	{
+		if (object_name_list[i]==object_index)
 		{
-			if (object_name_list[i]==object_index)
-			{
-				object_name_list[i] = NONE;
-			}
+			object_name_list[i] = NONE;
 		}
 	}
 
@@ -5324,6 +5334,10 @@ static void object_delete_recursive(
 	}
 	
 	object_type_delete(object_index);
+	/* port: and the names it got after object_delete, or without its own
+	name_index: object_new_from_scenario names a unit that object_type_place
+	already deleted, and a conversation names its participants' units */
+	object_name_list_forget(object_index);
 	object_header_delete(object_header_data, object_index);
 
 	return;
