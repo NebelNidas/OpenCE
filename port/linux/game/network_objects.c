@@ -348,6 +348,9 @@ struct distributed_inventory_message
 /* the host: the objects it has told its clients of, by absolute index
 (the object's datum index), NONE for none */
 static long objects_host_told[MAXIMUM_TRACKED_OBJECTS];
+/* ... whether each was a dead unit when last looked at (alive again at the
+same index only after a revert, and told of anew) */
+static boolean objects_host_told_dead[MAXIMUM_TRACKED_OBJECTS];
 /* ... the next object at rest to send, round them all */
 static long objects_host_resting_cursor;
 /* ... past the highest of them */
@@ -1175,19 +1178,33 @@ static void distributed_host_update_objects(
 	short count = 0;
 	short limit = MIN(MAXIMUM_ENTRIES_PER_MESSAGE, RELIABLE_ENTRIES(struct distributed_object_change));
 	struct object_iterator iterator;
+	struct object_datum *object;
 	long absolute_index;
 
 	/* (none set past those told of) */
 	csmemset(seen, 0, objects_host_told_count * sizeof(seen[0]));
 	object_iterator_new(&iterator, NETWORKED_OBJECT_TYPES, 0);
-	while (object_iterator_next(&iterator))
+	while ((object = object_iterator_next(&iterator)) != NULL)
 	{
+		boolean dead;
+
 		if (!distributed_object_networked(iterator.index))
 			continue;
+		dead = TEST_FLAG(_object_mask_unit, object->object.type) &&
+			TEST_FLAG(object->object.damage_flags, _object_dead_bit);
 		absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.index);
 		seen[absolute_index] = TRUE;
 		if (objects_host_told[absolute_index] == iterator.index)
-			continue;
+		{
+			boolean revived = objects_host_told_dead[absolute_index] && !dead;
+
+			objects_host_told_dead[absolute_index] = dead;
+			if (!revived)
+				continue;
+			/* (what it carries, with the next of them) */
+			objects_host_inventories[absolute_index].checksum = 0;
+			objects_host_inventories[absolute_index].weapons_checksum = 0;
+		}
 		/* (another object in the same place: that one is gone) */
 		if (objects_host_told[absolute_index] != NONE)
 		{
@@ -1204,6 +1221,7 @@ static void distributed_host_update_objects(
 			}
 		}
 		objects_host_told[absolute_index] = iterator.index;
+		objects_host_told_dead[absolute_index] = dead;
 		if (absolute_index >= objects_host_told_count)
 			objects_host_told_count = absolute_index + 1;
 		objects_statistics.creates++;
@@ -3618,6 +3636,7 @@ void network_objects_new_game(
 	for (absolute_index = 0; absolute_index < MAXIMUM_TRACKED_OBJECTS; absolute_index++)
 	{
 		objects_host_told[absolute_index] = NONE;
+		objects_host_told_dead[absolute_index] = FALSE;
 		objects_host_state_moving[absolute_index] = FALSE;
 		objects_host_rest_times[absolute_index] = NONE;
 		objects_host_inventories[absolute_index].carried_time = NONE;
