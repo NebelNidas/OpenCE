@@ -980,8 +980,10 @@ boolean any_player_is_dead(
 	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
 	{
 		/* port: ignore co-op players still waiting for the first checkpoint,
-		or the checkpoint that lets them in could never be saved */
-		if (player->unit_index == NONE && !players_coop_waiting_to_start(iterator.datum_index))
+		or the checkpoint that lets them in could never be saved, and those
+		who left, whose datums stay for the rest of the level */
+		if (player->unit_index == NONE && !player->quit_out_of_game &&
+			!players_coop_waiting_to_start(iterator.datum_index))
 			return TRUE;
 	}
 
