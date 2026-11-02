@@ -319,6 +319,8 @@ enum sound_datum_flags
 	_sound_cached_bit,
 	_sound_inaudible_bit,
 	_sound_waiting_for_cache_bit,
+	/* port: a scripted line started in a fast-forwarded scene */
+	_sound_fast_forward_dialog_bit,
 	NUMBER_OF_SOUND_FLAGS,
 };
 
@@ -2428,6 +2430,31 @@ void sound_stop_all(
 	return;
 }
 
+/* port: lines of a fast-forwarded scene (player_control.c) are timed in ticks and would overlap,
+such a line gives way to any newer scripted line */
+static void sound_fast_forward_dialog_new(
+	long sound_index)
+{
+	struct sound_datum *sound = sound_get(sound_index);
+	long other_index = data_next_index(sound_data, NONE);
+
+	while (other_index != NONE)
+	{
+		struct sound_datum *other = sound_get(other_index);
+
+		if (other_index != sound_index && other->type == _sound_impulse &&
+			TEST_FLAG(other->flags, _sound_fast_forward_dialog_bit))
+		{
+			sound_stop_impulse(other_index);
+			SET_FLAG(other->flags, _sound_fast_forward_dialog_bit, FALSE);
+		}
+		other_index = data_next_index(sound_data, other_index);
+	}
+	SET_FLAG(sound->flags, _sound_fast_forward_dialog_bit, game_time_get_fast_forward() > 1.f);
+
+	return;
+}
+
 long sound_new_impulse(
 	long definition_index,
 	struct sound_source *source,
@@ -2580,6 +2607,14 @@ long sound_new_impulse(
 									else
 									{
 										sound->start_time = sound_manager_globals.render_time;
+									}
+
+									if (definition->sound_class == _sound_class_scripted_dialog_to_player ||
+										definition->sound_class == _sound_class_scripted_dialog_to_other ||
+										definition->sound_class ==
+											_sound_class_scripted_dialog_force_unspatialized)
+									{
+										sound_fast_forward_dialog_new(sound_index);
 									}
 								}
 							}

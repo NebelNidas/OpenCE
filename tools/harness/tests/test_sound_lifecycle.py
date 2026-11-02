@@ -10,12 +10,15 @@ from harness import CHECK_FAILED, build, enum_with, function, mutated, read, run
 from harness.audio import manager_types
 
 CASES = ["fresh-loop", "fresh-impulse", "pending", "restart", "intro-loop",
-         "rapid", "other-owner", "other-track", "stop-cue", "fake-impulse", "repeated-stop", "four-tracks"]
+         "rapid", "other-owner", "other-track", "stop-cue", "fake-impulse", "repeated-stop", "four-tracks",
+         "fast-forward-dialog", "dialog-overlap"]
 NEGATIVE_CONTROLS = {
     "keeps-replaced-voice": (("sound_index != except_sound_index &&", "FALSE &&"), "restart"),
     "cancels-other-owner": (("sound->source_identifier == looping_sound_index &&", "TRUE &&"), "other-owner"),
     "cancels-other-track": (("sound->loop_track_index == track_index)", "TRUE)"), "other-track"),
+    "keeps-fast-forward-dialog": (("game_time_get_fast_forward() > 1.f", "FALSE"), "fast-forward-dialog"),
 }
+DIALOG = ["sound_stop_impulse", "sound_fast_forward_dialog_new"]
 
 
 def generated(fault=None, case=None):
@@ -27,10 +30,15 @@ def generated(fault=None, case=None):
         text = function(manager, name)
         if fault and ((case == "fresh-loop" and name == names[0]) or
                       (case == "fresh-impulse" and name == names[1]) or
-                      (case not in ("fresh-loop", "fresh-impulse") and name in names[2:])):
+                      (case not in ("fresh-loop", "fresh-impulse", "fast-forward-dialog") and name in names[2:])):
             if fault[0] in text:
                 text = mutated(text, *fault)
         code.append(text)
+    for name in reversed(DIALOG):
+        text = function(manager, name)
+        if fault and case == "fast-forward-dialog" and fault[0] in text:
+            text = mutated(text, *fault)
+        code.insert(1, text)
     enums = manager_types()
     constants_section = manager[manager.index("/* ---------- constants */"):]
     for member in ["_sound_promotion_dont", "_sound_compression_xbox_adpcm", "_sound_encoding_mono"]:

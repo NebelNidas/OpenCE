@@ -38,6 +38,8 @@ static struct sound_datum *checked_sound(long index) {
 #define sound_scale_random_value(...) 1.f
 #define real_seed_random(...) 1.f
 #define game_time_get() 0
+static float fast_forward=1.f;
+#define game_time_get_fast_forward() fast_forward
 #define sound_definition_promote(...) _sound_promotion_dont
 #define sound_travel_milliseconds(...) 0
 #define source_distance(...) 0.f
@@ -63,6 +65,10 @@ static long looping_sound_new(long definition_index,long identifier,struct sound
  (void)identifier; memset(&loops[0],0,sizeof(loops[0]));loops[0].identifier=1;
  loops[0].definition_index=definition_index;loops[0].source=*source;return 0;
 }
+static boolean sound_try_and_get(long i) {
+ return i!=NONE && ((struct sound_datum *)datum_get(sound_data,i))->identifier!=0;
+}
+static void sound_start_fade(short mode,real seconds,long fade_in_sound_index,long fade_out_sound_index);
 static void sound_set_definition_begin(long i,long d) { sound_get(i)->next_definition_index=d; }
 #include "under_test.inc"
 static void reset(void) {
@@ -103,6 +109,17 @@ int main(int argc,char **argv) {
  CASE("fresh-impulse") {
   struct sound_source source={.scale=1.f,.gain=1.f};long i=sound_new_impulse(0,&source,0,NULL,NULL,0);
   CHECK(i!=NONE && sound_calculate_fade(i)==1.f,"new impulse audible");return 0;
+ }
+ if(!strcmp(case_name,"fast-forward-dialog") || !strcmp(case_name,"dialog-overlap")) {
+  struct sound_source source={.scale=1.f,.gain=1.f};
+  test_definition.sound_class=_sound_class_scripted_dialog_to_player;
+  if(!strcmp(case_name,"fast-forward-dialog")) fast_forward=10.f;
+  long first=sound_new_impulse(0,&source,0,NULL,NULL,0);advance(hz,100);
+  long second=sound_new_impulse(1,&source,0,NULL,NULL,0);advance(hz,400);
+  CHECK(first!=NONE && second!=NONE && live(second) && sound_calculate_fade(second)==1.f,"newest line audible");
+  if(fast_forward>1.f) CHECK(!live(first),"older fast-forwarded line fades out");
+  else CHECK(live(first) && sound_calculate_fade(first)==1.f,"lines at normal speed overlap as on Halo PC");
+  return 0;
  }
  if(!strcmp(case_name,"four-tracks")) test_loop_definition.tracks.count=4;
  refresh(_looping_sound_refresh_start);long primary=loops[0].tracks[0].primary_sound_index,secondary=NONE;
