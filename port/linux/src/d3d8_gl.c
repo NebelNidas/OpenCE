@@ -1247,6 +1247,25 @@ static struct
 	GLsync fences[MAXIMUM_FRAMES_IN_FLIGHT];
 	long next;
 } frame_pacing;
+
+/* Vertices and indices are written into persistently mapped buffers, a
+segment for each frame display.frames_in_flight lets the GPU still read:
+a frame's segment is free again once frame_pacing_wait has passed that
+frame's fence. With Mesa's GL thread, radeonsi turns each glBufferSubData
+at an offset into a copy on the GPU with a pipeline flush. Without frame
+pacing nothing tells when the GPU is done with a segment, so the stream is
+written with glBufferSubData. */
+#define STREAM_RING_VERTEX_SEGMENT (8 * 1024 * 1024)
+#define STREAM_RING_INDEX_SEGMENT (4 * 1024 * 1024)
+
+static struct
+{
+	unsigned char *vertices, *indices;
+	unsigned long segments, segment;
+	unsigned long vertex_base, index_base;
+	/* draws that did not fit in what was left of the frame's segment */
+	unsigned long overflows;
+} stream_ring;
 #endif
 
 /* ---------- GL state cache
@@ -2424,6 +2443,10 @@ static void visibility_results_initialize(void);
 static BOOL visibility_readback_gl_ok(const char *phase);
 #endif
 
+#ifndef HALO_GLES
+static void stream_buffers_create(void);
+#endif
+
 static void gl_initialize(void)
 {
 	GLint major = 0, minor = 0;
@@ -2529,14 +2552,6 @@ static void gl_initialize(void)
 		device.index_buffer = device.index_buffers[0];
 	}
 #endif
-#ifndef HALO_GLES
-	glGenBuffers(1, &device.stream_buffer);
-	glBindBuffer(GL_ARRAY_BUFFER, device.stream_buffer);
-	glBufferData(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
-	glGenBuffers(1, &device.index_buffer);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, device.index_buffer);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
-#endif
 	glGenSamplers(D3DTSS_MAXSTAGES, device.samplers);
 #ifdef HALO_GLES
 	glGenQueries(VISIBILITY_TEST_SLOTS, device.queries);
@@ -2597,6 +2612,7 @@ static void gl_initialize(void)
 		frame_pacing.limit = 0;
 	if (frame_pacing.limit > MAXIMUM_FRAMES_IN_FLIGHT)
 		frame_pacing.limit = MAXIMUM_FRAMES_IN_FLIGHT;
+	stream_buffers_create();
 #endif
 	{
 		GLint renderbuffer_size = 0;
@@ -5989,6 +6005,98 @@ static void web_chunks_begin_frame(void)
 }
 #endif
 
+#ifndef HALO_GLES
+/* the stream and index buffers: the ring where frames are paced (and
+the driver maps them), otherwise buffers orphaned each frame. The ring is
+mapped for reading too, which gets it cached system memory: mapped only
+for writing, radeonsi puts it in VRAM, and writing it across PCIe costs a
+tenth of the frame rate without the GL thread on a large Custom Edition
+map. */
+static void stream_buffers_create(void)
+{
+	GLbitfield access = GL_MAP_WRITE_BIT | GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+	GLbitfield storage = access | GL_CLIENT_STORAGE_BIT;
+	unsigned long segments = (unsigned long)frame_pacing.limit;
+
+	memset(&stream_ring, 0, sizeof(stream_ring));
+	glGenBuffers(1, &device.stream_buffer);
+	glGenBuffers(1, &device.index_buffer);
+	if (segments)
+	{
+		glBindBuffer(GL_ARRAY_BUFFER, device.stream_buffer);
+		glBufferStorage(GL_ARRAY_BUFFER, (GLsizeiptr)(segments * STREAM_RING_VERTEX_SEGMENT), NULL, storage);
+		stream_ring.vertices = glMapBufferRange(GL_ARRAY_BUFFER, 0,
+			(GLsizeiptr)(segments * STREAM_RING_VERTEX_SEGMENT), access);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, device.index_buffer);
+		glBufferStorage(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)(segments * STREAM_RING_INDEX_SEGMENT), NULL, storage);
+		stream_ring.indices = glMapBufferRange(GL_ELEMENT_ARRAY_BUFFER, 0,
+			(GLsizeiptr)(segments * STREAM_RING_INDEX_SEGMENT), access);
+		if (stream_ring.vertices && stream_ring.indices)
+		{
+			stream_ring.segments = segments;
+			device.stream_offset = 0;
+			device.index_offset = 0;
+			platform_log("GPU: vertices and indices streamed through mapped buffers, %lu frames", segments);
+			return;
+		}
+		platform_log("GPU: cannot map the stream buffers; vertices and indices are uploaded");
+		while (glGetError() != GL_NO_ERROR)
+			;
+		glDeleteBuffers(1, &device.stream_buffer);
+		glDeleteBuffers(1, &device.index_buffer);
+		memset(&stream_ring, 0, sizeof(stream_ring));
+		glGenBuffers(1, &device.stream_buffer);
+		glGenBuffers(1, &device.index_buffer);
+	}
+	glBindBuffer(GL_ARRAY_BUFFER, device.stream_buffer);
+	glBufferData(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, device.index_buffer);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+}
+
+/* the next frame's segment: frame_pacing_wait has just waited for the
+frame that last used it */
+static void stream_ring_next_frame(void)
+{
+	stream_ring.segment = (stream_ring.segment + 1) % stream_ring.segments;
+	stream_ring.vertex_base = stream_ring.segment * STREAM_RING_VERTEX_SEGMENT;
+	stream_ring.index_base = stream_ring.segment * STREAM_RING_INDEX_SEGMENT;
+	device.stream_offset = stream_ring.vertex_base;
+	device.index_offset = stream_ring.index_base;
+}
+
+/* a frame that streams more than its vertex (or index) segment holds: the
+GPU finishes what is queued, and that segment is written again from its
+start (not the other: the draw being made may have written to it already) */
+static void stream_ring_overflow(BOOL indices)
+{
+	GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+	if (!stream_ring.overflows++)
+		platform_log("GPU: a frame streams more than %lu MB of vertices or %lu MB of indices",
+			(unsigned long)(STREAM_RING_VERTEX_SEGMENT >> 20), (unsigned long)(STREAM_RING_INDEX_SEGMENT >> 20));
+	if (fence)
+	{
+		glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+		glDeleteSync(fence);
+	}
+	if (indices)
+		device.index_offset = stream_ring.index_base;
+	else
+		device.stream_offset = stream_ring.vertex_base;
+}
+
+/* size bytes at offset of a mapped buffer */
+static void stream_ring_write(unsigned char *memory, unsigned long base, unsigned long segment_size,
+	unsigned long offset, unsigned long size, const void *data)
+{
+	/* (a single draw larger than a segment is not drawn right) */
+	if (offset + size > base + segment_size)
+		size = offset < base + segment_size ? base + segment_size - offset : 0;
+	memcpy(memory + offset, data, size);
+}
+#endif
+
 /* makes room for size bytes of uploads, orphaning the stream buffer if it
 is full. A draw reserves room for all of its streams at once: orphaning
 between two of them would leave the attributes already pointed at the
@@ -6005,6 +6113,14 @@ static void stream_reserve(unsigned long size)
 			device.stream_buffer = web_chunk_get(0, size, &device.stream_capacity);
 			device.stream_offset = 0;
 		}
+		return;
+	}
+#endif
+#ifndef HALO_GLES
+	if (stream_ring.segments)
+	{
+		if (device.stream_offset + size > stream_ring.vertex_base + STREAM_RING_VERTEX_SEGMENT)
+			stream_ring_overflow(FALSE);
 		return;
 	}
 #endif
@@ -6048,7 +6164,11 @@ static unsigned long stream_upload(const void *data, unsigned long size)
 	else
 		host_gl_buffer_write(GL_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)length, data);
 #else
-	buffer_upload(GL_ARRAY_BUFFER, offset, length, data);
+	if (stream_ring.segments)
+		stream_ring_write(stream_ring.vertices, stream_ring.vertex_base, STREAM_RING_VERTEX_SEGMENT,
+			offset, length, data);
+	else
+		buffer_upload(GL_ARRAY_BUFFER, offset, length, data);
 #endif
 #ifdef HALO_GLES
 	device.stream_serial = device.draw_serial;
@@ -6124,6 +6244,14 @@ static unsigned long index_upload(const void *data, unsigned long size)
 #endif
 	{
 		state_element_array_buffer(device.index_buffer);
+#ifndef HALO_GLES
+		if (stream_ring.segments)
+		{
+			if (device.index_offset + size > stream_ring.index_base + STREAM_RING_INDEX_SEGMENT)
+				stream_ring_overflow(TRUE);
+		}
+		else
+#endif
 		if (device.index_offset + size > INDEX_BUFFER_SIZE)
 		{
 			glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
@@ -6140,7 +6268,11 @@ static unsigned long index_upload(const void *data, unsigned long size)
 	else
 		host_gl_buffer_write(GL_ELEMENT_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)length, data);
 #else
-	buffer_upload(GL_ELEMENT_ARRAY_BUFFER, offset, length, data);
+	if (stream_ring.segments)
+		stream_ring_write(stream_ring.indices, stream_ring.index_base, STREAM_RING_INDEX_SEGMENT,
+			offset, length, data);
+	else
+		buffer_upload(GL_ELEMENT_ARRAY_BUFFER, offset, length, data);
 #endif
 #ifdef HALO_GLES
 	device.index_serial = device.draw_serial;
@@ -7940,8 +8072,13 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		device.index_offset = 0;
 		web_chunks_begin_frame();
 #else
-		device.stream_offset = STREAM_BUFFER_SIZE; /* orphan next frame */
-		device.index_offset = INDEX_BUFFER_SIZE;
+		if (stream_ring.segments)
+			stream_ring_next_frame();
+		else
+		{
+			device.stream_offset = STREAM_BUFFER_SIZE; /* orphan next frame */
+			device.index_offset = INDEX_BUFFER_SIZE;
+		}
 #endif
 	}
 	device.frame++;
