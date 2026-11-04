@@ -86,6 +86,7 @@ symbols in this file:
 #include "game/players.h"
 #include "interface/hud.h"
 #include "interface/hud_definitions.h"
+#include "interface/hud_draw.h"
 #include "interface/hud_messaging.h"
 #include "interface/hud_unit.h"
 #include "interface/hud_weapon.h"
@@ -1464,6 +1465,11 @@ void hud_draw_screen(
 {
 	long player_index = local_player_get_player_index(render.local_player_index);
 	director_perspective perspective = director_get_perspective(render.local_player_index);
+	rectangle2d window_before_inset;
+
+	/* port: display.hud_inset_x and _y, on whatever window the view has */
+	window_before_inset = render.camera.window_bounds;
+	hud_inset_apply(&render.camera.window_bounds);
 
 	rasterizer_hud_begin();
 	if (player_index != NONE)
@@ -1531,6 +1537,7 @@ void hud_draw_screen(
 	}
 
 	rasterizer_hud_end();
+	render.camera.window_bounds = window_before_inset; /* port: back from hud_inset_apply */
 	if (temporary_hud)
 	{
 		temporary_hud_draw();

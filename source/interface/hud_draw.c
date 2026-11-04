@@ -109,6 +109,10 @@ symbols in this file:
 #include "custom_edition_cache.h"
 #include "view_fov.h" /* port: port/linux/game/view_fov.c */
 
+/* the platform layer's (port/linux/src/port_config.c) */
+long config_integer(const char *name);
+unsigned long config_changes(void);
+
 /* ---------- constants */
 
 enum
@@ -1401,6 +1405,72 @@ boolean hud_number_shows_only_when_zoomed(
 	struct number_hud_element_definition const *number)
 {
 	return TEST_FLAG(number->number_flags, _hud_number_show_only_when_zoomed_bit);
+}
+
+/* port: display.hud_inset_x and _y, in the units of a screen 480 high
+(negative moves out); HUD POSITION's own values while it is open */
+static struct
+{
+	unsigned long read_at;
+	short x;
+	short y;
+	boolean previewing;
+	short preview_x;
+	short preview_y;
+} hud_inset = { (unsigned long)-1, 0, 0, FALSE, 0, 0 };
+
+void hud_inset_preview(
+	boolean previewing,
+	short x,
+	short y)
+{
+	hud_inset.previewing = previewing;
+	hud_inset.preview_x = (short)PIN(x, -HUD_INSET_MAXIMUM, HUD_INSET_MAXIMUM);
+	hud_inset.preview_y = (short)PIN(y, -HUD_INSET_MAXIMUM, HUD_INSET_MAXIMUM);
+}
+
+void hud_inset_get(
+	short *x,
+	short *y)
+{
+	if (hud_inset.read_at != config_changes())
+	{
+		hud_inset.read_at = config_changes();
+		hud_inset.x = (short)PIN(config_integer("display.hud_inset_x"), -HUD_INSET_MAXIMUM, HUD_INSET_MAXIMUM);
+		hud_inset.y = (short)PIN(config_integer("display.hud_inset_y"), -HUD_INSET_MAXIMUM, HUD_INSET_MAXIMUM);
+	}
+	*x = hud_inset.previewing ? hud_inset.preview_x : hud_inset.x;
+	*y = hud_inset.previewing ? hud_inset.preview_y : hud_inset.y;
+}
+
+/* both sides by the same, so the window's middle (where the view aims) stays:
+in to half the view across at most, out to the nearer of the view's edges */
+static void hud_inset_axis(
+	short *low,
+	short *high,
+	long inset,
+	short view_low,
+	short view_high)
+{
+	if (inset > 0)
+		inset = MIN(inset, MAX(0, (*high - *low - (view_high - view_low) / 2) / 2));
+	if (inset < 0)
+		inset = MAX(inset, -MAX(0, MIN(*low - view_low, view_high - *high)));
+	*low = (short)(*low + inset);
+	*high = (short)(*high - inset);
+}
+
+void hud_inset_apply(
+	rectangle2d *window)
+{
+	rectangle2d const *view = &render.camera.viewport_bounds;
+	short x, y;
+
+	hud_inset_get(&x, &y);
+	if (x)
+		hud_inset_axis(&window->x0, &window->x1, x, view->x0, view->x1);
+	if (y)
+		hud_inset_axis(&window->y0, &window->y1, y, view->y0, view->y1);
 }
 
 /* the window as it would be 640 wide, at the middle of the wide one (each

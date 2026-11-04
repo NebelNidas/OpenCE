@@ -87,6 +87,20 @@ void hud_zoomed_layout_begin(
 	rectangle2d *saved_window_bounds);
 void hud_zoomed_layout_end(
 	rectangle2d const *saved_window_bounds);
+/* port: display.hud_inset_x and _y (hud_draw.c) */
+enum
+{
+	HUD_INSET_MAXIMUM = 200
+};
+void hud_inset_get(
+	short *x,
+	short *y);
+void hud_inset_preview(
+	boolean previewing,
+	short x,
+	short y);
+void hud_inset_apply(
+	rectangle2d *window);
 long get_flash_duration(
 	struct hud_color_definition const *hud_color);
 pixel32 get_flash_color(
