@@ -1256,9 +1256,10 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 #if !defined(HALO_ANDROID) && !defined(_WIN32)
 	/* Mesa's GL thread: the renderer makes thousands of GL calls a frame
 	and never waits for their results, so handing them to a thread of
-	their own takes a fifth of the main thread's time off it. It leaves an
-	explicit mesa_glthread setting alone and other drivers ignore it. */
-	setenv("mesa_glthread", "true", 0);
+	their own takes a fifth of the main thread's time off it. Set either
+	way, so that Mesa's own choice per driver does not apply; an explicit
+	mesa_glthread setting wins and other drivers ignore it. */
+	setenv("mesa_glthread", config_boolean("display.gl_thread") ? "true" : "false", 0);
 #endif
 
 #ifdef HALO_ANDROID

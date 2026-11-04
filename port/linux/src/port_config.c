@@ -135,6 +135,9 @@ static const struct config_setting config_settings[] =
 		"The most frames the GPU has queued (1 to 8): a frame waits for the GPU\n"
 		"to finish the one this many before it, so that frames come evenly when\n"
 		"the GPU is the slower; 0 leaves it to the driver." },
+	{ "display.gl_thread", _config_boolean, "true", "HALO_GL_THREAD", _environment_value, _platform_desktop,
+		"Linux with Mesa: hand the game's GL calls to a thread of Mesa's own\n"
+		"(mesa_glthread); a mesa_glthread variable in the environment wins." },
 	/* port: the frame counter the game draws at the bottom right of a game
 	(main.c's main_framerate_render, display_framerate) for a setting, so the
 	settings screens show it (tools/port_settings.py) and it is kept in
