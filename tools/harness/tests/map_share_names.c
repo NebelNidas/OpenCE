@@ -4,7 +4,8 @@ MAP_SHARE_NAMES.C (test)
 The real names of map sharing (port/linux/game/map_share_files.c): the file
 name of a second version of a map ends in _ and the first digits of its
 hash, which the menus leave out, numbering the versions instead
-(custom_edition_maps.c), and a map's version is those digits' number.
+(custom_edition_maps.c), and a map's version is those digits' number, with
+the hashes of the resource maps it reads composed in.
 test_map_share_names.py takes the constants (config.inc) and the code
 (under_test.inc).
 */
@@ -12,6 +13,7 @@ test_map_share_names.py takes the constants (config.inc) and the code
 #include "harness.h"
 #include "config.inc"
 
+#include <stdint.h>
 #include <strings.h>
 #include <wchar.h>
 
@@ -205,6 +207,32 @@ int main(int argc, char **argv)
 		CHECK(map_share_hash_version(hash) == strtoul(digits, NULL, 16), "version %08lx for the digits %s",
 			map_share_hash_version(hash), digits);
 		CHECK(map_share_hash_version(zero) != 0, "a version of 0, which a client checks nothing for");
+		return 0;
+	}
+	/* a map that reads resource maps: its version and their hashes composed,
+	each byte of a hash read counting, the kinds not read not */
+	CASE("versions-with-resource-maps")
+	{
+		byte hashes[NUMBER_OF_MAP_SHARE_FILE_KINDS][MAP_SHARE_HASH_BYTES];
+		unsigned long both = FLAG(_map_share_file_bitmaps) | FLAG(_map_share_file_sounds);
+		unsigned long version;
+
+		memset(hashes, 0x11, sizeof(hashes));
+		CHECK(map_share_version_compose(0x0e2b3ee4UL, 0, hashes) == 0x0e2b3ee4UL, "none read changed it");
+		CHECK(map_share_version_compose(0x0e2b3ee4UL, FLAG(_map_share_file_map), hashes) == 0x0e2b3ee4UL,
+			"the map alone changed it");
+		version = map_share_version_compose(0x0e2b3ee4UL, both, hashes);
+		CHECK(version != 0x0e2b3ee4UL && version != 0, "composed %08lx", version);
+		CHECK(map_share_version_compose(0x0e2b3ee5UL, both, hashes) != version, "the map's version left out");
+		CHECK(map_share_version_compose(0x0e2b3ee4UL, FLAG(_map_share_file_bitmaps) | FLAG(_map_share_file_locale),
+			hashes) != version, "which ones are read left out");
+		hashes[_map_share_file_locale][5] ^= 1;
+		CHECK(map_share_version_compose(0x0e2b3ee4UL, both, hashes) == version, "loc.map counted though not read");
+		hashes[_map_share_file_sounds][MAP_SHARE_HASH_BYTES - 1] ^= 1;
+		CHECK(map_share_version_compose(0x0e2b3ee4UL, both, hashes) != version, "sounds.map's last byte left out");
+		hashes[_map_share_file_sounds][MAP_SHARE_HASH_BYTES - 1] ^= 1;
+		hashes[_map_share_file_bitmaps][0] ^= 0x80;
+		CHECK(map_share_version_compose(0x0e2b3ee4UL, both, hashes) != version, "bitmaps.map's first byte left out");
 		return 0;
 	}
 	fprintf(stderr, "unknown case: %s\n", case_name);

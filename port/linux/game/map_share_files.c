@@ -2,15 +2,18 @@
 MAP_SHARE_FILES.C
 
 The files map sharing hashes (map_share.h): a map's version (its hash's
-first digits), the hashes of the files this machine shares, worked out on a
-thread of their own a file at a time, so that a map of hundreds of
-megabytes costs the game no frames, and the names a build of before gave
-maps (<name>_<hash>.map) given back.
+first digits, composed with the hashes of the resource maps it reads), the
+hashes of the files this machine shares, worked out on a thread of their
+own a file at a time, so that a map of hundreds of megabytes costs the game
+no frames, and the names a build of before gave maps (<name>_<hash>.map)
+given back.
 
 A file's hash is BLAKE2b's (32 bytes) of a label, its size and its pieces'
 hashes (each piece MAP_SHARE_PIECE_BYTES of it, the last shorter, hashed with
 BLAKE2b): a client that knows a file's hash, from the host, can check the
 pieces' hashes any player sends it, and each piece as it arrives.
+Custom Edition's resource maps are hashed on the thread from the start, so
+that a network game's map version does not wait for them.
 */
 
 /* ---------- headers */
@@ -49,7 +52,7 @@ enum
 	run (not looked at again) */
 	MAXIMUM_NAMING_QUEUE = 64,
 	MAXIMUM_NAMED = 1024,
-	/* the maps' hashes kept this run (map_share_map_hash) */
+	/* the files' hashes kept this run (map_share_map_hash) */
 	MAXIMUM_KNOWN_HASHES = 64,
 	/* the longest map file name the map lists take (custom_edition_maps.c:
 	the level name, custom_maps\ and it, kept whole by the game engine) */
@@ -95,7 +98,7 @@ struct naming
 	char name[MAP_SHARE_PATH_SIZE];
 };
 
-/* a map's hash, found this run: its file by its path, size and time
+/* a file's hash, found this run: its file by its path, size and time
 written, so that it is read once */
 struct known_hash
 {
@@ -120,9 +123,11 @@ struct map_share_files_globals
 	long job_owner;
 	struct naming job_naming;
 
-	/* the maps' hashes found, and the next of them to replace */
+	/* the files' hashes found, and the next of them to replace */
 	struct known_hash known[MAXIMUM_KNOWN_HASHES];
 	short next_known;
+	/* the resource maps put in the catalog to be hashed ahead */
+	boolean resource_maps_queued;
 	/* the level name a host's game was last given, and its map's version
 	(map_share_level_name_choose) */
 	char chosen_level[MAP_SHARE_PATH_SIZE];
@@ -491,7 +496,7 @@ boolean map_share_pieces_hashed(
 	return TRUE;
 }
 
-/* ---------- maps' hashes */
+/* ---------- files' hashes */
 
 static struct known_hash *known_hash_find(
 	char const *path,
@@ -560,6 +565,13 @@ boolean map_share_map_hash(
 
 	if (!file_stamp(path, &size, &modified) || size > MAXIMUM_FILE_BYTES)
 		return FALSE;
+	/* (being hashed on the thread: waited for) */
+	if (globals->thread && globals->job_type == _hash_job_file && !csstrcasecmp(globals->job.path, path))
+	{
+		while (!thread_has_exited(globals->thread))
+			Sleep(10);
+		map_share_files_update();
+	}
 	known = known_hash_find(path, size, modified);
 	if (known)
 	{
@@ -579,7 +591,8 @@ boolean map_share_map_hash(
 			return TRUE;
 		}
 	}
-	/* (read here: a map takes a fraction of a second) */
+	/* (read here: a map takes a fraction of a second, a resource map
+	seconds) */
 	csmemset(&job, 0, sizeof(job));
 	csstrncpy(job.path, path, sizeof(job.path) - 1);
 	hash_job_run(&job);
@@ -601,6 +614,54 @@ unsigned long map_share_hash_version(
 	return version ? version : 1;
 }
 
+unsigned long map_share_version_compose(
+	unsigned long hash_version,
+	unsigned long resource_maps,
+	byte (*hashes)[MAP_SHARE_HASH_BYTES])
+{
+	uint32_t version = 2166136261UL;
+	short kind;
+	short index;
+
+	if (!(resource_maps & ~FLAG(_map_share_file_map)))
+		return hash_version;
+	/* (FNV-1a of the map's version, and each resource map's kind and hash) */
+	for (index = 0; index < 4; index++)
+		version = (version ^ ((hash_version >> (index * 8)) & 0xFF)) * 16777619UL;
+	for (kind = _map_share_file_bitmaps; kind < NUMBER_OF_MAP_SHARE_FILE_KINDS; kind++)
+	{
+		if (!(resource_maps & FLAG(kind)))
+			continue;
+		version = (version ^ (uint32_t)kind) * 16777619UL;
+		for (index = 0; index < MAP_SHARE_HASH_BYTES; index++)
+			version = (version ^ hashes[kind][index]) * 16777619UL;
+	}
+
+	return version ? version : 1;
+}
+
+/* the version of the map file at `path` of this hash */
+static unsigned long map_file_version(
+	char const *path,
+	byte const *hash)
+{
+	byte hashes[NUMBER_OF_MAP_SHARE_FILE_KINDS][MAP_SHARE_HASH_BYTES];
+	unsigned long resource_maps = custom_edition_map_file_resource_maps(path);
+	short kind;
+
+	/* (one not there, or unreadable: zeros) */
+	csmemset(hashes, 0, sizeof(hashes));
+	for (kind = _map_share_file_bitmaps; kind < NUMBER_OF_MAP_SHARE_FILE_KINDS; kind++)
+	{
+		char resource_path[MAP_SHARE_PATH_SIZE];
+
+		if ((resource_maps & FLAG(kind)) && custom_edition_resource_map_file_path(kind, resource_path))
+			map_share_map_hash(resource_path, hashes[kind]);
+	}
+
+	return map_share_version_compose(map_share_hash_version(hash), resource_maps, hashes);
+}
+
 boolean map_share_map_version(
 	char const *path,
 	unsigned long *version)
@@ -609,8 +670,14 @@ boolean map_share_map_version(
 
 	if (!map_share_map_hash(path, hash))
 		return FALSE;
-	*version = map_share_hash_version(hash);
+	*version = map_file_version(path, hash);
 	return TRUE;
+}
+
+unsigned long map_share_file_version(
+	struct map_share_file const *file)
+{
+	return map_file_version(file->path, file->hash);
 }
 
 /* ---------- names given back */
@@ -802,7 +869,7 @@ void map_share_level_name_choose(
 	}
 	csprintf(level_name, "%s%.*s", CUSTOM_EDITION_LEVEL_NAME_PREFIX, (int)length, name);
 	csstrncpy(globals->chosen_level, level_name, sizeof(globals->chosen_level) - 1);
-	globals->chosen_version = map_share_hash_version(hash);
+	globals->chosen_version = map_file_version(path, hash);
 	error(_error_silent, "map sharing: the game's map is %s (%s, version %08lx)", level_name, path,
 		globals->chosen_version);
 }
@@ -878,6 +945,19 @@ void map_share_files_update(
 		}
 		globals->job.piece_hashes = NULL;
 		globals->job_type = _hash_job_none;
+	}
+	/* (Custom Edition's resource maps, which most maps read, hashed ahead) */
+	if (!globals->resource_maps_queued && halo_custom_edition_tag_cache())
+	{
+		char path[MAP_SHARE_PATH_SIZE];
+		short kind;
+
+		globals->resource_maps_queued = TRUE;
+		for (kind = _map_share_file_bitmaps; kind < NUMBER_OF_MAP_SHARE_FILE_KINDS; kind++)
+		{
+			if (custom_edition_resource_map_file_path(kind, path))
+				map_share_file_hash(path, kind);
+		}
 	}
 
 	/* the next: a download's pieces, a file to share, then a map to give

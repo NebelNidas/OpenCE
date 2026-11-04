@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, constant, function, mutated, read, run  # noqa: E402
 
 CASES = ["hashed-names", "safe-names", "base-length", "digits", "pieces", "display-names", "versions-numbered",
-         "versions-without-the-first", "versions"]
+         "versions-without-the-first", "versions", "versions-with-resource-maps"]
 
 # a fault in map_share_files.c, the function it is in, and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -42,6 +42,16 @@ NEGATIVE_CONTROLS = {
                                "(unsigned long)hash[1] << 24 | (unsigned long)hash[0] << 16"),
                               "map_share_hash_version", "versions"),
     "version-zero": (("return version ? version : 1;", "return version;"), "map_share_hash_version", "versions"),
+    "resource-hashes-left-out": (("version = (version ^ hashes[kind][index]) * 16777619UL;", ";"),
+                                 "map_share_version_compose", "versions-with-resource-maps"),
+    "resource-hash-cut-short": (("index < MAP_SHARE_HASH_BYTES;", "index < MAP_SHARE_HASH_BYTES - 1;"),
+                                "map_share_version_compose", "versions-with-resource-maps"),
+    "kinds-left-out": (("version = (version ^ (uint32_t)kind) * 16777619UL;", ";"), "map_share_version_compose",
+                       "versions-with-resource-maps"),
+    "unread-kinds-counted": (("if (!(resource_maps & FLAG(kind)))\n\t\t\tcontinue;", ""),
+                             "map_share_version_compose", "versions-with-resource-maps"),
+    "map-version-left-out": (("for (index = 0; index < 4; index++)", "for (index = 0; index < 0; index++)"),
+                             "map_share_version_compose", "versions-with-resource-maps"),
 }
 
 
@@ -51,10 +61,13 @@ def generated(fault=None, faulty_function=None):
     config = ""
     for name in ("MAP_SHARE_NAME_DIGITS", "MAP_SHARE_PIECE_BYTES", "MAP_SHARE_HASH_BYTES"):
         config += f"#define {name} {constant(header, name)}\n"
+    start = header.index("\t_map_share_file_map = 0,")
+    config += "enum\n{\n" + header[start:header.index("NUMBER_OF_MAP_SHARE_FILE_KINDS,", start)]
+    config += "NUMBER_OF_MAP_SHARE_FILE_KINDS\n};\n"
     text = ""
     for name in ("hex_digit", "map_share_name_hashed", "name_device", "map_share_name_safe",
                  "map_share_name_base_length", "map_share_hash_digits", "map_share_piece_count",
-                 "map_share_hash_version"):
+                 "map_share_hash_version", "map_share_version_compose"):
         code = function(source, name)
         if fault and name == faulty_function:
             code = mutated(code, *fault)

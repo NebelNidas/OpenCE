@@ -1,4 +1,4 @@
-version 41
+version 42
 bound CHAT_TEXT_SIZE 64
 bound DISCORD_ID_SIZE 24
 bound DISCORD_NAME_SIZE 40
@@ -283,7 +283,7 @@ struct distributed_infection_player d8b98eecf26b
 struct distributed_infection_state 8a01c46945ad
 struct distributed_inventory 05a279a76ba5
 struct distributed_inventory_message 11825a84dc29
-struct distributed_map_share_offer 4bea857123c2
+struct distributed_map_share_offer 41503e7697a6
 struct distributed_map_share_offer_file 204a3b73d193
 struct distributed_map_share_progress 2c3831013302
 struct distributed_map_share_request 3cdcbc8c3a49

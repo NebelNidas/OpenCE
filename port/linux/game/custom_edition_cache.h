@@ -85,7 +85,7 @@ Custom Edition maps folders, whatever it holds. */
 boolean custom_edition_map_file_present(
 	char const *map_name);
 /* The version of the level's map, a network game record's
-(map_share_hash_version): of the map a host's game was given
+(map_share_map_version): of the map a host's game was given
 (map_share_level_name_choose), else of the level's file; 0 if it has none. */
 unsigned long custom_edition_map_version(
 	char const *level_name);
@@ -109,7 +109,7 @@ without it, if the hash is its. */
 boolean custom_edition_map_file_named(
 	char const *map_name,
 	char *path);
-/* ... the file of the level's name and `version` (map_share_hash_version's):
+/* ... the file of the level's name and `version` (map_share_map_version's):
 <name>.map in a maps folder, or the custom_maps folder's <name>_<hash>.map. */
 boolean custom_edition_map_find_version(
 	char const *level_name,
@@ -126,6 +126,10 @@ resource map its tags are held in: cache_file_resource_maps_needed); 0 if
 it has no file, or none. */
 unsigned long custom_edition_map_resource_maps_needed(
 	char const *level_name);
+/* ... of the map file at `path`; 0 also if it is no Custom Edition cache or
+its tag index can't be read */
+unsigned long custom_edition_map_file_resource_maps(
+	char const *path);
 /* the file of the Custom Edition map loaded, or NULL */
 char const *custom_edition_cache_loaded_path(
 	void);

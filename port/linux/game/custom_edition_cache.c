@@ -891,7 +891,6 @@ boolean custom_edition_map_find_version(
 {
 	char const *name = tag_name_strip_path(level_name);
 	char pattern[MAP_PATH_SIZE];
-	char digits[MAP_SHARE_NAME_DIGITS + 1];
 	WIN32_FIND_DATAA data;
 	HANDLE find;
 	unsigned long found_version;
@@ -906,11 +905,11 @@ boolean custom_edition_map_find_version(
 			return TRUE;
 		}
 	}
-	/* (custom_maps' other versions of the name: the one whose name ends in
-	the version's digits, if its hash is that) */
+	/* (custom_maps' other versions of the name, each one's version looked
+	at: the digits a name ends in are its hash's, the version's only for a
+	map that reads no resource maps) */
 	if (strlen(maps_folder(0)) + strlen(name) + 1 + MAP_SHARE_NAME_DIGITS + strlen(MAP_FILE_EXTENSION) >= MAP_PATH_SIZE)
 		return FALSE;
-	sprintf(digits, "%08lx", version);
 	sprintf(pattern, "%s%s_*%s", maps_folder(0), name, MAP_FILE_EXTENSION);
 	find = FindFirstFileA(pattern, &data);
 	if (find == INVALID_HANDLE_VALUE)
@@ -926,9 +925,8 @@ boolean custom_edition_map_find_version(
 		if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || length <= strlen(MAP_FILE_EXTENSION))
 			continue;
 		file_name[length - strlen(MAP_FILE_EXTENSION)] = 0;
-		/* (version 1 is also a hash's of digits 00000000: map_share_hash_version) */
 		if (!map_share_name_hashed(file_name) || (size_t)map_share_name_base_length(file_name) != strlen(name) ||
-			_strnicmp(file_name, name, strlen(name)) || (version != 1 && strcmp(file_name + strlen(name) + 1, digits)))
+			_strnicmp(file_name, name, strlen(name)))
 		{
 			continue;
 		}
@@ -959,20 +957,27 @@ boolean custom_edition_resource_map_file_path(
 	return FALSE;
 }
 
-unsigned long custom_edition_map_resource_maps_needed(
-	char const *level_name)
+unsigned long custom_edition_map_file_resource_maps(
+	char const *path)
 {
-	char path[MAP_PATH_SIZE];
 	struct custom_edition_file file;
 	uint32_t types = 0;
 
-	if (custom_edition_map_path(level_name, path) && custom_edition_file_open(&file, path))
+	if (custom_edition_file_open(&file, path))
 	{
 		if (cache_file_resource_maps_needed(&file.source, &types) != _cache_file_status_ok)
 			types = 0;
 		custom_edition_file_close(&file);
 	}
 	return types;
+}
+
+unsigned long custom_edition_map_resource_maps_needed(
+	char const *level_name)
+{
+	char path[MAP_PATH_SIZE];
+
+	return custom_edition_map_path(level_name, path) ? custom_edition_map_file_resource_maps(path) : 0;
 }
 
 char const *custom_edition_cache_loaded_path(
@@ -1027,8 +1032,17 @@ boolean custom_edition_cache_present(
 		{
 			error(_error_silent, "custom edition: '%s' is another version of the host's map (the host's %08lx)", path,
 				version);
-			snprintf(message, message_size,
-				"Your %.64s.map is a different version from the host's. Copy the host's into custom_maps.", name);
+			if (custom_edition_map_file_resource_maps(path))
+			{
+				snprintf(message, message_size,
+					"Your %.64s.map or the resource maps it reads (bitmaps.map, sounds.map, loc.map) are a "
+					"different version from the host's. Install the host's.", name);
+			}
+			else
+			{
+				snprintf(message, message_size,
+					"Your %.64s.map is a different version from the host's. Copy the host's into custom_maps.", name);
+			}
 			return FALSE;
 		}
 		snprintf(message, message_size, "You don't have the map %.*s.map. If you have it, copy it into custom_maps.",

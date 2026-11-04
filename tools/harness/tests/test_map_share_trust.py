@@ -11,12 +11,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, constant, enum_with, function, mutated, read, run, structure  # noqa: E402
 
 CASES = ["source-addresses", "hashes-sources", "hashes-frames", "progress-advances", "progress-asked-again",
-         "progress-other-level-between", "offer-of-the-version", "requests-apart", "requests-apart-after-another-level"]
+         "progress-other-level-between", "offer-of-the-version", "offer-composed-version", "requests-apart", "requests-apart-after-another-level"]
 
 # a fault in map_share.c, the function it is in, and the case that must catch it
 NEGATIVE_CONTROLS = {
-    "any-version-offered": (("(!game || map_share_hash_version(file->hash) != (unsigned long)game->map.version)", "0"),
+    "any-version-offered": (("(!game || map_share_file_version(file) != (unsigned long)game->map.version)", "0"),
                             "host_update", "offer-of-the-version"),
+    "offered-hashes-ignored": (("if (index < download->file_count)", "if (0)"), "download_offer_of_the_version",
+                               "offer-composed-version"),
+    "own-hashes-ignored": (("custom_edition_resource_map_file_path(kind, path) && map_share_map_hash(path, hashes[kind])",
+                            "0"), "download_offer_of_the_version", "offer-composed-version"),
+    "resource-maps-ignored": (("resource_maps, hashes) ==", "0, hashes) =="), "download_offer_of_the_version",
+                              "offer-composed-version"),
+    "hash-version-alone": (("map_share_version_compose(map_share_hash_version(download->files[map_index].hash), "
+                            "resource_maps, hashes) ==\n\t\tdownload->version",
+                            "map_share_hash_version(download->files[map_index].hash) == download->version"),
+                           "download_offer_of_the_version", "offer-composed-version"),
     "lan-host-sends-anywhere": (("return !address_private(host_address) || address_private(address);", "return TRUE;"),
                                 "source_address_allowed", "source-addresses"),
     "loopback-from-a-lan": ((" ||\n\t\t((address >> 24) == 127) != ((host_address >> 24) == 127)", ""),
@@ -52,7 +62,7 @@ NEGATIVE_CONTROLS = {
 FUNCTIONS = ("get_long", "elapsed", "address_internet", "address_private", "source_address_allowed", "hashes_source",
              "frame_hashes", "host_machine_valid", "host_machine_downloading", "map_share_machine_downloading",
              "map_share_machine_needs_map", "level_name_copy", "host_offer", "host_request", "host_asked",
-             "host_update", "host_progress")
+             "host_update", "host_progress", "download_offer_of_the_version")
 
 
 def generated(fault=None, faulty_function=None):
@@ -72,7 +82,8 @@ def generated(fault=None, faulty_function=None):
                  "distributed_map_share_progress", "download_file", "source", "download", "request", "serving",
                  "connection", "host_machine", "map_share_globals"):
         config += structure(source, name) + "\n"
-    text = ""
+    # (map_share_files.c's, as it is)
+    text = function(read("port/linux/game/map_share_files.c"), "map_share_version_compose") + "\n"
     for name in FUNCTIONS:
         code = function(source, name)
         if fault and name == faulty_function:

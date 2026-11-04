@@ -329,6 +329,11 @@ game's flags also tell its clients whether the host is a dedicated server
 (`_network_game_cooperative_dedicated_bit`: its loading zones then ask for
 most of the living players).
 
+Then version 42 has a Custom Edition map's version, the game record's, also
+take the hashes of the resource maps the map reads, and a host's map
+sharing offer (`distributed_map_share_offer`) says which those are in the
+byte after its flags, padding before (below, "Map sharing").
+
 `port/linux/network_format.txt` records the wire format of the current
 version (`tools/network_format.py`): `test_linux_port.py` fails when the
 sources' messages, kinds, bits, structs sent whole or the sizes of their
@@ -601,10 +606,16 @@ the map's own (`custom_maps\hugeass`), which every screen and the server
 browser show, and the game record's map version is the first 32 bits of the
 map's hash (`map_share_hash_version`), which says which version of the map it
 is: a client plays its file of that name and version, so two versions never
-meet. A file's hash is BLAKE2b's (32 bytes) of a label, its size and the
-BLAKE2b hashes of its pieces (256 KiB each); a map is hashed when it is
-needed (a host's game is put on it, a client's settings name its name) and
-kept for the run. No map is renamed. A map downloaded beside another version
+meet. For a map that reads resource maps (bitmaps.map, sounds.map, loc.map:
+`cache_file_resource_maps_needed`, below) the version is that number and
+their hashes composed (FNV-1a, `map_share_version_compose`), so a machine
+with other resource maps has another version of the map too and is refused
+rather than loading the map with the wrong pixels, samples or strings; one
+lacking a resource map counts its hash as zeros. A file's hash is BLAKE2b's
+(32 bytes) of a label, its size and the BLAKE2b hashes of its pieces
+(256 KiB each); a map is hashed when it is needed (a host's game is put on
+it, a client's settings name its name), the resource maps on the hashing
+thread from the start, and each hash is kept for the run. No map is renamed. A map downloaded beside another version
 of its name is named for its hash (`hugeass_0e2b3ee4.map`), and the menus
 show it as `Hugeass (2)`; a map an earlier build named so, with no map of
 its name alone beside it, has its name given back as the map lists find it.
@@ -633,7 +644,10 @@ its name alone beside it, has its name given back as the map lists find it.
   sharing off, or not the game's map), and which of its other machines may
   have them (`_sources`: an address on a LAN, internet play's key hash on the
   internet), again every ten seconds. A map that is not of the game's version is
-  not offered. The client checks that the map is of the game's version, and
+  not offered. The offer also says which resource maps the map reads, so the
+  client checks that the map is of the game's version (its hash's version
+  composed with the hashes of those resource maps, the offered ones' and its
+  own others': else its own are not the host's, which it is told), and
   that no file is larger than the cache loader takes, and refuses a map
   name Windows takes for a device (`CON`, `NUL`, `COM1` and the like,
   before the first dot). It connects to a LAN machine the host names only

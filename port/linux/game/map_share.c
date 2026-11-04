@@ -33,7 +33,7 @@ the others as <name>.part and renamed when whole (a .part found again is
 checked piece by piece and taken up where it was), into custom_maps under
 the map's own name, or, beside another version of that name, the name and
 its hash's first digits (the game's map version is checked against the
-offered map's hash).
+offered map's hash and those of the resource maps it reads).
 
 A machine still downloading does not hold the lobby: the machines that
 have the map start, and it joins the game in progress once the download is
@@ -286,7 +286,9 @@ struct distributed_map_share_offer
 	byte result;
 	byte file_count;
 	byte flags;
-	byte pad;
+	/* the resource maps the map reads, offered or not (a bit each,
+	_map_share_file_*): the game's map version has their hashes in it */
+	byte resource_maps;
 };
 
 struct distributed_map_share_offer_file
@@ -478,6 +480,8 @@ struct host_machine
 	short catalog_files[MAXIMUM_FILES];
 	short file_kinds[MAXIMUM_FILES];
 	short file_count;
+	/* the resource maps the map reads (the offer's) */
+	byte resource_maps;
 	unsigned long sources_at;
 	/* downloading (and for DOWNLOADING_TIMEOUT after it said it was done:
 	its players join then), and done */
@@ -1562,6 +1566,65 @@ static boolean download_file_open(
 	return download_file_create(file);
 }
 
+/* Whether an offered map is of the game's version: its hash's version
+composed with the hashes of the resource maps it reads, the offered ones'
+and this machine's others'. The host offers only its map of the game's
+version, so one this machine's resource maps don't make it of has other
+resource maps here than the host's. */
+static boolean download_offer_of_the_version(
+	byte resource_maps)
+{
+	struct download *download = &map_share_globals.download;
+	byte hashes[MAXIMUM_FILES][MAP_SHARE_HASH_BYTES];
+	char path[MAP_SHARE_PATH_SIZE];
+	char names[64] = "";
+	short map_index;
+	short kind;
+
+	for (map_index = 0; map_index < download->file_count && download->files[map_index].kind != _map_share_file_map;
+		map_index++)
+		;
+	if (map_index == download->file_count)
+		return TRUE;
+	csmemset(hashes, 0, sizeof(hashes));
+	for (kind = _map_share_file_bitmaps; kind < MAXIMUM_FILES; kind++)
+	{
+		short index;
+
+		if (!TEST_FLAG(resource_maps, kind))
+			continue;
+		for (index = 0; index < download->file_count && download->files[index].kind != kind; index++)
+			;
+		if (index < download->file_count)
+		{
+			csmemcpy(hashes[kind], download->files[index].hash, MAP_SHARE_HASH_BYTES);
+		}
+		else if (custom_edition_resource_map_file_path(kind, path) && map_share_map_hash(path, hashes[kind]))
+		{
+			snprintf(names + csstrlen(names), sizeof(names) - csstrlen(names), "%s%s.map", names[0] ? ", " : "",
+				resource_map_type_describe((enum resource_map_type)kind));
+		}
+	}
+	if (map_share_version_compose(map_share_hash_version(download->files[map_index].hash), resource_maps, hashes) ==
+		download->version)
+	{
+		return TRUE;
+	}
+	if (names[0])
+	{
+		char reason[160];
+
+		snprintf(reason, sizeof(reason), "The resource maps the map reads here (%s) are not the host's. "
+			"Install the host's.", names);
+		download_fail(reason);
+	}
+	else
+	{
+		download_fail("The host's offer was not of this map.");
+	}
+	return FALSE;
+}
+
 /* the host's offer: the files to fetch */
 static void download_offered(
 	struct distributed_map_share_offer const *offer,
@@ -1598,13 +1661,11 @@ static void download_offered(
 		csmemcpy(file->hash, files[index].hash, MAP_SHARE_HASH_BYTES);
 		file->piece_count = map_share_piece_count(file->size);
 		map_share_hash_digits(file->hash, digits);
-		/* (a file this machine did not ask for, or offered twice, or a map
-		not of the game's version) */
+		/* (a file this machine did not ask for, or offered twice) */
 		if (file->kind >= MAXIMUM_FILES || !TEST_FLAG(download->wanted, file->kind) ||
 			TEST_FLAG(offered, file->kind) || !file->size ||
 			file->size > (unsigned long)(file->kind == _map_share_file_map ? MAXIMUM_MAP_BYTES :
-			MAXIMUM_RESOURCE_MAP_BYTES) ||
-			(file->kind == _map_share_file_map && map_share_hash_version(file->hash) != download->version))
+			MAXIMUM_RESOURCE_MAP_BYTES))
 		{
 			download->file_count = index;
 			download_fail("The host's offer was not of this map.");
@@ -1638,6 +1699,8 @@ static void download_offered(
 		}
 		download->total_bytes += file->size;
 	}
+	if (!download_offer_of_the_version(offer->resource_maps))
+		return;
 	/* (the hashes come first: no piece can be checked without them) */
 	for (index = 0; index < download->file_count; index++)
 		download->files[index].state = _file_awaiting_hashes;
@@ -3098,6 +3161,7 @@ static void host_offer(
 	message.offer.result = result;
 	message.offer.file_count = (byte)count;
 	message.offer.flags = host_in_game() ? FLAG(_offer_in_progress_bit) : 0;
+	message.offer.resource_maps = result == _offer_ok ? machine->resource_maps : 0;
 	for (index = 0; index < count; index++)
 	{
 		struct map_share_file *file = map_share_file_get(machine->catalog_files[index]);
@@ -3217,6 +3281,7 @@ static void host_request(
 		return;
 	}
 	needed = custom_edition_map_resource_maps_needed(request->level_name) | FLAG(_map_share_file_map);
+	machine->resource_maps = (byte)(needed & ~FLAG(_map_share_file_map));
 	for (kind = 0; kind < MAXIMUM_FILES; kind++)
 	{
 		if (!TEST_FLAG(request->wanted, kind) || !TEST_FLAG(needed, kind))
@@ -3324,7 +3389,7 @@ static void host_update(
 				struct map_share_file *file = map_share_file_get(machine->catalog_files[file_index]);
 
 				if (machine->file_kinds[file_index] == _map_share_file_map &&
-					(!game || map_share_hash_version(file->hash) != (unsigned long)game->map.version))
+					(!game || map_share_file_version(file) != (unsigned long)game->map.version))
 				{
 					error(_error_silent, "map sharing: %s is not the game's version of its map (%08lx): not shared",
 						file->path, game ? (unsigned long)game->map.version : 0UL);

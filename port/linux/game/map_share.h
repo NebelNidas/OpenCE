@@ -6,8 +6,9 @@ port/linux/NETCODE.md, "Map sharing").
 
 A host's game is on a map by its own name (custom_maps\hugeass, as every
 screen shows it), and its game record's map version is the first 32 bits of
-the map's hash (map_share_hash_version), which says which version of the map
-it is. A client takes its file of that name and version (custom_edition_cache.c),
+the map's hash (map_share_hash_version) with the hashes of the resource maps
+it reads (map_share_map_version), which says which version of the map and
+its resource maps it is. A client takes its file of that name and version (custom_edition_cache.c),
 and one without it asks the host for it. If the host shares maps
 (network.map_share), it says which files make up the map (the map, and the
 resource maps it needs that the client lacks) and which other players have
@@ -88,9 +89,9 @@ boolean map_share_level_name_version(
 	char const *level_name,
 	unsigned long *version);
 
-/* A map file's hash, read here once (a fraction of a second) and kept for
-the rest of the run, by its path, size and the time it was written. FALSE
-if it cannot be read. */
+/* A map file's or resource map's hash, read here once (a fraction of a
+second for a map) and kept for the rest of the run, by its path, size and
+the time it was written. FALSE if it cannot be read. */
 boolean map_share_map_hash(
 	char const *path,
 	byte *hash);
@@ -102,7 +103,17 @@ void map_share_map_hash_remember(
 (the digits a file name of another version ends in), never 0 */
 unsigned long map_share_hash_version(
 	byte const *hash);
-/* the version of the map file at `path` */
+/* a map version of the map's hash version and the hashes of the resource
+maps it reads (`resource_maps`, a bit each, FLAG(_map_share_file_*);
+`hashes` by the same kinds); `hash_version` if it reads none */
+unsigned long map_share_version_compose(
+	unsigned long hash_version,
+	unsigned long resource_maps,
+	byte (*hashes)[MAP_SHARE_HASH_BYTES]);
+/* the version of the map file at `path`: its hash's, composed with the
+hashes of the resource maps it reads (custom_edition_map_file_resource_maps),
+so that machines with other resource maps have other versions; a resource
+map not there counts as a hash of zeros */
 boolean map_share_map_version(
 	char const *path,
 	unsigned long *version);
@@ -188,6 +199,9 @@ struct map_share_file
 short map_share_file_hash(
 	char const *path,
 	short kind);
+/* the map version of a hashed map of the catalog (map_share_map_version's) */
+unsigned long map_share_file_version(
+	struct map_share_file const *file);
 /* ... and a file whose pieces' hashes are known (a download's, which were
 checked): taken as it is, not hashed again */
 short map_share_file_hashed(

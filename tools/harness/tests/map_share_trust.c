@@ -4,12 +4,15 @@ MAP_SHARE_TRUST.C (test)
 What map sharing (port/linux/game/map_share.c) takes of another machine's
 word: the LAN addresses a host names, the pieces' hashes (asked of the host
 first, none in a frame refused), a client's progress, which keeps it in the
-host's game only while it grows, and its requests for the map, taken a few
-seconds apart at most. test_map_share_trust.py takes the constants and
+host's game only while it grows, its requests for the map, taken a few
+seconds apart at most, and the version of the map a host offers, checked
+with the hashes of the resource maps it reads. test_map_share_trust.py takes the constants and
 structures (config.inc) and the code (under_test.inc).
 */
 
 #include "harness.h"
+
+#include <stdint.h>
 
 typedef unsigned short word;
 
@@ -119,11 +122,46 @@ static char const *tag_name_strip_path(char const *name)
 #define config_boolean(name) 1
 #define custom_edition_level_name(level_name) (!strncmp(level_name, "custom_maps\\", 12))
 #define custom_edition_map_file_path(level_name, path) (strcpy(path, "d:\\custom_maps\\hugeass.map"), 1)
-#define custom_edition_resource_map_file_path(kind, path) 0
 #define custom_edition_map_resource_maps_needed(level_name) 0UL
+#define csstrlen(string) strlen(string)
 /* (map_share_files.c's: the hash's first 32 bits) */
 #define map_share_hash_version(hash) \
 	((unsigned long)(hash)[0] << 24 | (unsigned long)(hash)[1] << 16 | (unsigned long)(hash)[2] << 8 | (hash)[3])
+/* (a map reading no resource maps: its hash's version) */
+#define map_share_file_version(file) map_share_hash_version((file)->hash)
+
+/* this machine's resource maps (a bit each, _map_share_file_*), each one's
+hash all this byte */
+static byte fake_resource_maps_here;
+static byte fake_resource_hash_here = 0x22;
+static int fake_failed;
+static char fake_fail_reason[256];
+
+/* (cache_file_formats.h's, numbered as the files' kinds) */
+enum resource_map_type
+{
+	_resource_map_none,
+};
+
+static char const *resource_map_type_describe(enum resource_map_type type)
+{
+	return type == _map_share_file_bitmaps ? "bitmaps" : type == _map_share_file_sounds ? "sounds" : "loc";
+}
+
+static boolean custom_edition_resource_map_file_path(short kind, char *path)
+{
+	if (!(fake_resource_maps_here & FLAG(kind)))
+		return FALSE;
+	sprintf(path, "d:\\custom_maps\\%s.map", resource_map_type_describe(kind));
+	return TRUE;
+}
+
+static boolean map_share_map_hash(char const *path, byte *hash)
+{
+	(void)path;
+	memset(hash, fake_resource_hash_here, MAP_SHARE_HASH_BYTES);
+	return TRUE;
+}
 
 /* the pieces' hashes: a file's hash the first piece's here, which is enough to
 tell a whole list from none */
@@ -144,7 +182,8 @@ static boolean download_file_open(struct download_file *file, short index)
 
 static void download_fail(char const *reason)
 {
-	(void)reason;
+	fake_failed++;
+	snprintf(fake_fail_reason, sizeof(fake_fail_reason), "%s", reason);
 }
 
 static void connection_close(struct connection *connection, char const *reason)
@@ -419,6 +458,46 @@ int main(int argc, char **argv)
 		host_update();
 		CHECK(fake_offers == 2 && fake_offer_result == _offer_unavailable,
 			"a map of another version than the game's was offered");
+		return 0;
+	}
+	/* a client offered the map: of the game's version only with the hashes
+	of the resource maps the host says it reads, the offered ones' and this
+	machine's others' */
+	CASE("offer-composed-version")
+	{
+		struct download *download = &map_share_globals.download;
+		byte hashes[NUMBER_OF_MAP_SHARE_FILE_KINDS][MAP_SHARE_HASH_BYTES];
+
+		memset(hashes, 0, sizeof(hashes));
+		memset(hashes[_map_share_file_sounds], 0x22, MAP_SHARE_HASH_BYTES);
+		memset(download, 0, sizeof(*download));
+		download->version = map_share_version_compose(0x0e2b3ee4UL, FLAG(_map_share_file_sounds), hashes);
+		download->file_count = 1;
+		download->files[0].kind = _map_share_file_map;
+		download->files[0].hash[0] = 0x0e;
+		download->files[0].hash[1] = 0x2b;
+		download->files[0].hash[2] = 0x3e;
+		download->files[0].hash[3] = 0xe4;
+		fake_resource_maps_here = FLAG(_map_share_file_bitmaps) | FLAG(_map_share_file_sounds);
+		fake_resource_hash_here = 0x22;
+		CHECK(download_offer_of_the_version(FLAG(_map_share_file_sounds)) && !fake_failed,
+			"the map with this machine's sounds.map, the host's, was refused");
+		CHECK(!download_offer_of_the_version(0) && fake_failed == 1, "an offer of the map's hash alone was taken");
+		fake_resource_hash_here = 0x33;
+		CHECK(!download_offer_of_the_version(FLAG(_map_share_file_sounds)) && fake_failed == 2,
+			"the map with another sounds.map here was taken");
+		CHECK(strstr(fake_fail_reason, "sounds.map") && !strstr(fake_fail_reason, "bitmaps.map"),
+			"the reason named not the resource map read here: %s", fake_fail_reason);
+		/* (the host's sounds.map offered: its hash counts, not this machine's) */
+		download->file_count = 2;
+		download->files[1].kind = _map_share_file_sounds;
+		memset(download->files[1].hash, 0x22, MAP_SHARE_HASH_BYTES);
+		CHECK(download_offer_of_the_version(FLAG(_map_share_file_sounds)) && fake_failed == 2,
+			"the map with the offered sounds.map was refused");
+		/* (another map) */
+		download->files[0].hash[3] = 0xe5;
+		CHECK(!download_offer_of_the_version(FLAG(_map_share_file_sounds)) && fake_failed == 3,
+			"another map with the host's sounds.map was taken");
 		return 0;
 	}
 	CASE("requests-apart")
