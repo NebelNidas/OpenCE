@@ -90,6 +90,7 @@ symbols in this file:
 /* port: static transparent part links for the newly loaded model tags. */
 #include "models/models.h"
 #include "structure_culling.h" /* port: port/linux/game/structure_culling.c */
+#include "hud_position.h" /* port: port/linux/game/hud_position.c */
 
 /* ---------- constants */
 
@@ -433,6 +434,9 @@ static void render_window(
 		}
 		interface_draw_screen();
 		rasterizer_screen_flash();
+		/* port: Graphics' HUD POSITION, its corner marks under its text */
+		if (rasterizer_target == _render_target_primary)
+			hud_position_draw(local_player_index);
 		/* port: the view's menus centred in it (a quarter's are 320 wide) */
 		halo_screen_ui_offset_view(rasterizer_camera->viewport_bounds.x1 - rasterizer_camera->viewport_bounds.x0);
 		render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The port's settings screen, in the PC version's style (tools/port_settings.py) -->
+<menus>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/hud_position/hud_position_screen" width="640" height="480" flags="pause_game">
+		<on event="created" run="port hud position init"/>
+		<on event="deleted" run="port hud position close"/>
+		<on event="left stick_left" run="port hud position narrower"/>
+		<on event="right stick_right" run="port hud position wider"/>
+		<on event="up stick_up" run="port hud position taller"/>
+		<on event="down stick_down" run="port hud position shorter"/>
+		<on event="y" run="port hud position reset"/>
+		<on event="a start" run="port hud position save" back="true"/>
+		<on event="b back" back="true"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/hud_position/band" y="172"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/hud_position/band" width="640" height="136" bitmap="bitmaps/semi_transparent_grey">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/hud_position/title" y="8"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/hud_position/help" y="38"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/hud_position/values" y="106"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/hud_position/title" type="text" width="640" height="26" text="HUD POSITION" font="ui\large_ui" color="#FFFFFFFF" align="center">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/hud_position/help" type="text" width="640" height="66" text="Line up the red corners with the corners of what you can see.\nLeft and right: narrower or wider. Up and down: taller or shorter.\nA: save. B: cancel. Y: reset." font="ui\small_ui" color="#FFFFFFFF" align="center">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/hud_position/values" type="text" width="640" height="22" font="ui\small_ui" color="#FF2896FF" align="center">
+		<data input="port hud position update"/>
+	</widget>
+</menus>

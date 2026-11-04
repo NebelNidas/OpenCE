@@ -179,7 +179,8 @@ static const struct config_setting config_settings[] =
 	{ "display.hud_inset_x", _config_integer, "0", "HALO_HUD_INSET_X", _environment_value, _platform_all,
 		"How far the HUD keeps in from the left and right of its window, in the\n"
 		"units of a screen 480 high (-200 to 200); negative moves it out, as far\n"
-		"as the nearer edge of the screen or view." },
+		"as the nearer edge of the screen or view. Graphics' HUD POSITION sets\n"
+		"it and display.hud_inset_y by eye." },
 	{ "display.hud_inset_y", _config_integer, "0", "HALO_HUD_INSET_Y", _environment_value, _platform_all,
 		"The same for the top and bottom of the HUD's window." },
 	{ "display.hud_button_style", _config_string, "\"classic\"", "HALO_HUD_BUTTON_STYLE", _environment_value, _platform_all,

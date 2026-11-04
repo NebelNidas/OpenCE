@@ -97,6 +97,7 @@ their handlers open opens.
 #include "../src/player_link.h" /* port: port/linux/src/player_link.c */
 #include "../src/server_master.h"
 #include "text_filter.h"
+#include "hud_position.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -2949,6 +2950,28 @@ static void mods_update(struct widget_instance *list)
 			icon->animation.current_frame_index = status == _port_mod_out_of_order ? 1 : 2;
 	}
 	mods_details_show(list->parameters.list.extended_description, count ? mods_screen.chosen : NONE, count);
+}
+
+/* Graphics' HUD POSITION (hud_position.c): its screen's events */
+static boolean hud_position_event(struct widget_instance *widget, char const *what)
+{
+	if (!strcmp(what, "init"))
+		hud_position_begin(screen_of(widget)->local_player_index);
+	else if (!strcmp(what, "close"))
+		hud_position_end();
+	else if (!strcmp(what, "narrower"))
+		hud_position_move(1, 0);
+	else if (!strcmp(what, "wider"))
+		hud_position_move(-1, 0);
+	else if (!strcmp(what, "taller"))
+		hud_position_move(0, -1);
+	else if (!strcmp(what, "shorter"))
+		hud_position_move(0, 1);
+	else if (!strcmp(what, "reset"))
+		hud_position_reset();
+	else if (!strcmp(what, "save") && !hud_position_save())
+		platform_log("menus: HUD POSITION not saved to config.toml");
+	return TRUE;
 }
 
 /* "port mods save" (OK): kept, and played at once (port_mods_save keeps
@@ -7752,6 +7775,8 @@ boolean pc_menu_event_function_invoke(
 			return FALSE;
 		if (!strncmp(name, "port controller ", 16))
 			return pad_editor_event(widget, name);
+		if (!strncmp(name, "port hud position ", 18))
+			return hud_position_event(widget, name + 18);
 		if (!strcmp(name, "main menu quit game"))
 		{
 			platform_request_quit();
@@ -8267,4 +8292,11 @@ void pc_menu_game_data_function_invoke(
 		coop_friendly_fire_text(widget);
 	else if (!strcmp(name, "port playlist edit desc"))
 		playlist_edit_description(widget);
+	else if (!strcmp(name, "port hud position update"))
+	{
+		wchar_t text[ROW_TEXT_LENGTH];
+
+		hud_position_text(text, NUMBEROF(text));
+		text_set(widget, text);
+	}
 }

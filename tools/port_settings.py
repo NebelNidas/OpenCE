@@ -353,6 +353,11 @@ _video["categories"] = [
     ("EXTRA EFFECTS:", "video_settings/extra_effects",
      "Visual modifiers the stock game does not\nhave, such as the shield glow."),
 ]
+# HUD POSITION: its corner marks and the inset are port/linux/game/hud_position.c's
+SCREENS["video_settings/graphics"]["categories"] = [
+    ("HUD POSITION:", "video_settings/hud_position",
+     "Move the HUD in from the screen's edges, or out,\nwith red marks at its corners.")]
+SCREENS["video_settings/hud_position"] = {"screen": "hud_position_screen", "custom": "hud_position"}
 SCREENS["video_settings/fov_viewmodels"] = {
     "screen": "fov_viewmodel_settings_screen", "header": _video["header"], "spacing": 30,
     "rows": [
@@ -889,12 +894,48 @@ def _controller_screen() -> list:
             for line in lines]
 
 
+def _hud_position_screen(folder: str, spec: dict) -> list:
+    """Graphics' HUD POSITION: no list or buttons, the screen's own
+    events (left and right narrower and wider, up and down taller and
+    shorter, A or Start saves, B leaves it, Y resets) and its text on a
+    band across the middle, the corner marks drawn under it by the game"""
+    base = f"{PE}/{folder}"
+    moves = [("left stick_left", "narrower"), ("right stick_right", "wider"), ("up stick_up", "taller"),
+             ("down stick_down", "shorter")]
+    handlers = ['<on event="created" run="port hud position init"/>',
+                '<on event="deleted" run="port hud position close"/>',
+                *[f'<on event="{events}" run="port hud position {what}"/>' for events, what in moves],
+                '<on event="y" run="port hud position reset"/>',
+                '<on event="a start" run="port hud position save" back="true"/>',
+                '<on event="b back" back="true"/>',
+                f'<child widget="{base}/band" y="172"/>']
+    lines = _widget(f"{base}/{spec['screen']}", [("width", 640), ("height", 480), ("flags", "pause_game")], handlers)
+    lines += _widget(f"{base}/band", [("width", 640), ("height", 136), ("bitmap", "bitmaps/semi_transparent_grey")],
+                     [f'<child widget="{base}/title" y="8"/>', f'<child widget="{base}/help" y="38"/>',
+                      f'<child widget="{base}/values" y="106"/>'])
+    lines += _widget(f"{base}/title", [("type", "text"), ("width", 640), ("height", 26), ("text", "HUD POSITION"),
+                                       ("font", "ui\\large_ui"), ("color", "#FFFFFFFF"), ("align", "center")], [])
+    lines += _widget(f"{base}/help", [("type", "text"), ("width", 640), ("height", 66),
+                                      ("text", "Line up the red corners with the corners of what you can see.\\n"
+                                               "Left and right: narrower or wider. Up and down: taller or shorter.\\n"
+                                               "A: save. B: cancel. Y: reset."),
+                                      ("font", "ui\\small_ui"), ("color", "#FFFFFFFF"), ("align", "center")], [])
+    lines += _widget(f"{base}/values", [("type", "text"), ("width", 640), ("height", 22), ("font", "ui\\small_ui"),
+                                        ("color", "#FF2896FF"), ("align", "center")],
+                     ['<data input="port hud position update"/>'])
+    return lines
+
+
+CUSTOM_SCREENS = {"hud_position": _hud_position_screen}
+
+
 def settings_files() -> dict:
     """the files of the port's screens, by their names in ce/"""
     files = {}
     for folder, spec in SCREENS.items():
+        make = CUSTOM_SCREENS[spec["custom"]] if "custom" in spec else _setting_screen
         files[f"{PE}/{folder}".replace("/", ".") + ".xml"] = (
-            _controller_screen() if folder == "controller_remapping" else _setting_screen(folder, spec))
+            _controller_screen() if folder == "controller_remapping" else make(folder, spec))
     files[f"{PE}/controls_setup".replace("/", ".") + ".xml"] = _controls_screen()
     return {name: ['<?xml version="1.0" encoding="UTF-8"?>',
                    "<!-- The port's settings screen, in the PC version's style (tools/port_settings.py) -->",
