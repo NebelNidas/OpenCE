@@ -6006,19 +6006,25 @@ static void web_chunks_begin_frame(void)
 #endif
 
 #ifndef HALO_GLES
-/* the stream and index buffers: the ring where frames are paced (and
-the driver maps them), otherwise buffers orphaned each frame. The ring is
-mapped for reading too, which gets it cached system memory: mapped only
-for writing, radeonsi puts it in VRAM, and writing it across PCIe costs a
-tenth of the frame rate without the GL thread on a large Custom Edition
-map. */
+/* the stream and index buffers: the ring where frames are paced with
+Mesa's drivers (and the driver maps them), otherwise buffers orphaned each
+frame (NVIDIA's Windows driver drew a10 some 40 % slower from the ring).
+GL_MAP_READ_BIT gets the ring cached system memory: mapped for writing
+only, radeonsi puts it in VRAM, and the writes across PCIe cost about a
+tenth of the frame rate without the GL thread. */
 static void stream_buffers_create(void)
 {
 	GLbitfield access = GL_MAP_WRITE_BIT | GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
 	GLbitfield storage = access | GL_CLIENT_STORAGE_BIT;
 	unsigned long segments = (unsigned long)frame_pacing.limit;
+	const char *version = (const char *)glGetString(GL_VERSION);
 
 	memset(&stream_ring, 0, sizeof(stream_ring));
+	if (segments && (!version || !strstr(version, "Mesa")))
+	{
+		segments = 0;
+		platform_log("GPU: vertices and indices are uploaded (mapped buffers only with Mesa's drivers)");
+	}
 	glGenBuffers(1, &device.stream_buffer);
 	glGenBuffers(1, &device.index_buffer);
 	if (segments)
