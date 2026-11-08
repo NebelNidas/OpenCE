@@ -258,6 +258,8 @@ enum
 	/* (alive) camouflaged, and doubly so */
 	_distributed_unit_camouflaged_bit = 0,
 	_distributed_unit_super_camouflaged_bit,
+	/* (riding) climbing out of its seat, its exit animation playing */
+	_distributed_unit_exiting_seat_bit,
 };
 
 /* a unit state's parts on the wire: which of those that are not always
@@ -1714,6 +1716,8 @@ static void distributed_state_from_player(
 		{
 			state->vehicle_index = unit->object.parent_object_index;
 			state->seat_index = unit->unit.parent_seat_index;
+			SET_FLAG(state->unit_flags, _distributed_unit_exiting_seat_bit,
+				unit->unit.animation.state == _unit_state_exiting_seat);
 		}
 		state->position = unit->object.position;
 		distributed_vector_pack(&unit->object.translational_velocity, DISTRIBUTED_VELOCITY_SCALE, &state->velocity);
@@ -2678,9 +2682,19 @@ static void distributed_handle_unit_state(
 			unit->object.parent_object_index : NONE;
 		boolean same = vehicle_index == state->vehicle_index &&
 			(vehicle_index == NONE || unit->unit.parent_seat_index == state->seat_index);
+		boolean exiting = state->vehicle_index != NONE &&
+			TEST_FLAG(state->unit_flags, _distributed_unit_exiting_seat_bit);
 		short *disagreement = &distributed_seat_disagreements[state->player_index];
 
 		if (same)
+		{
+			*disagreement = 0;
+			/* the host's unit climbs out: the same animation here */
+			if (exiting && unit->unit.animation.state != _unit_state_exiting_seat)
+				unit_try_and_exit_seat(unit_index);
+		}
+		/* (out here already, its exit ahead of the host's) */
+		else if (exiting && vehicle_index == NONE)
 			*disagreement = 0;
 		else if (!local || ++*disagreement > MAX(SEAT_DISAGREEMENT_TICKS,
 			(short)ceil(distributed_own_round_trip) + SEAT_DISAGREEMENT_SLACK_TICKS))
