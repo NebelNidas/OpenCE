@@ -163,6 +163,9 @@ static const struct config_setting config_settings[] =
 		"The first-person view's field of view on foot, in degrees across at\n"
 		"16:9 (20 to 150); 0 keeps the stock view. Vehicles, cinematics and\n"
 		"scripted cameras keep their own." },
+	{ "display.fov_fixed_reticle", _config_boolean, "false", "HALO_FOV_FIXED_RETICLE", _environment_value, _platform_all,
+		"Keep the reticle at its stock size when display.fov changes the view;\n"
+		"false scales it with the view, so that it stays on the aim." },
 	{ "display.viewmodel_fov", _config_real, "0.0", "HALO_VIEWMODEL_FOV", _environment_value, _platform_all,
 		"The first-person weapon's and hands' field of view, in degrees across\n"
 		"at 16:9 (20 to 150); 0 keeps the weapon's stock view, also when\n"

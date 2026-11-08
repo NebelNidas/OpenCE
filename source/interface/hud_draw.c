@@ -1701,9 +1701,9 @@ static void hud_draw_bitmap_with_meter(
 		&xy_scale,
 		theta,
 		color,
-		/* port: a reticle at the centre keeps to its aim (view_fov.c) */
+		/* port: a reticle at the centre keeps to its aim or its stock size (view_fov.c) */
 		is_crosshair_bitmap && absolute_placement->corner == _hud_anchor_center ?
-			render_fov_reticle_scale(render.local_player_index) : 1.0f);
+			render_fov_hud_reticle_scale(render.local_player_index) : 1.0f);
 
 	match_assert_stack_frame("c:\\halo\\SOURCE\\interface\\hud_draw.c", 814);
 

@@ -1,7 +1,8 @@
 /*
 VIEW_FOV.C
 
-The first-person view's field of view (display.fov, display.viewmodel_fov)
+The first-person view's field of view (display.fov, display.viewmodel_fov,
+display.fov_fixed_reticle)
 and whether the weapon is drawn (display.viewmodel_visible), the local
 render view only: the observer, its transitions and what the network sends
 keep the game's own camera. Each angle is horizontal at 16:9 (the vertical
@@ -163,6 +164,21 @@ real render_fov_reticle_scale(short local_player_index)
 		return 1.0f;
 	}
 	return reticle_scales[local_player_index];
+}
+
+real render_fov_hud_reticle_scale(short local_player_index)
+{
+	static boolean initialized, fixed;
+	static unsigned long read_at;
+	unsigned long changes = config_changes();
+
+	if (!initialized || read_at != changes)
+	{
+		fixed = config_boolean("display.fov_fixed_reticle") != 0;
+		initialized = TRUE;
+		read_at = changes;
+	}
+	return fixed ? 1.0f : render_fov_reticle_scale(local_player_index);
 }
 
 /* ---------- the first-person weapon's */
